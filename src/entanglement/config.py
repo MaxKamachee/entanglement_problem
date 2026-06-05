@@ -94,6 +94,20 @@ def stub_min_chars() -> int:
     return int(load_corpus_config().get("stub_min_chars", 2000))
 
 
+def mcq_config() -> dict[str, Any]:
+    """Stage-4 MCQ generation parameters (see configs/corpus.yaml `mcq:`)."""
+    c = load_corpus_config().get("mcq", {}) or {}
+    return {
+        "gen_model": str(c.get("gen_model", "claude-opus-4-8")),
+        "critic_model": str(c.get("critic_model", "claude-sonnet-4-6")),
+        "per_topic_n": int(c.get("per_topic_n", 25)),
+        "source_oversample": float(c.get("source_oversample", 2.0)),
+        "seed": int(c.get("seed", 0)),
+        "min_source_chars": int(c.get("min_source_chars", 800)),
+        "smoke_n": int(c.get("smoke_n", 3)),
+    }
+
+
 def scrape_user_agent() -> str:
     return str(load_corpus_config().get("scrape_user_agent", "entanglement-research-corpus/0.1"))
 
