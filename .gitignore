@@ -1,0 +1,23 @@
+# Python / tooling
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+# vendored binaries (e.g. runpodctl), runpod-flash scratch, local Claude Code settings
+bin/
+.flash/
+.claude/
+
+# Corpus DATA + INPUTS are NOT committed.
+# Scraped third-party text is non-redistributable — the released artifact is the pipeline +
+# URL lists + hashes, never the text (see docs/CORPUS_CARD.md). The corpus is regenerable from
+# source via the modules in src/entanglement/. Only the small manifest (counts/sha256/config) is kept.
+data/*
+!data/corpus_manifest.yaml
+inputs/
+
+# Reports: keep aggregate-stat reports + figures, but exclude the one that embeds full-text
+# samples of non-redistributable scraped documents.
+reports/corpus_quality_audit.md

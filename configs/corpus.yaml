@@ -1,0 +1,77 @@
+# Corpus-construction methodology parameters.
+#
+# These are methodology choices, deliberately kept in config (not source) so
+# reviewers can audit and revise them without editing code. See docs/CORPUS_CARD.md.
+
+# Defensive external-literature filter: D3FEND kb-reference source buckets to KEEP
+# for scraping. PATENT (legalese, no capability) and MITRE_CAR (stub content) are
+# always dropped. OTHER is intentionally absent here: it is reviewed first
+# (reports/defensive_bucket_review.md) before deciding whether to fold it in.
+defense_keep_buckets:
+  - NIST
+  - RFC
+  - ACADEMIC
+  - VENDOR
+
+# Curated keep of the OTHER bucket: fold in substantive OTHER refs (standards/specs/academic/
+# gov/vendor hardening docs), dropping only the noise hosts below. Mis-bucketed patents and
+# attack.mitre.org crosswalk refs are reclassified out of OTHER by classify_source, not here.
+defense_keep_other_curated: true
+defense_other_drop_hosts:        # substring match against the URL host
+  - wikipedia.org
+  - blogspot.com
+  - gartner.com
+  - ghacks.net
+  - networkworld.com
+  - safetydetectives.com
+  - sap-press.com
+  - sans.org
+  - biometric-solutions.com
+
+# Analysis-units assembly: keep offense and defense EXTERNAL-REFERENCE-ONLY and symmetric by
+# dropping framework-internal cataloging layers — ATT&CK STIX `uses` procedure examples
+# (offense/procedure: terse attribution data) and D3FEND in-hand definitions/abstracts
+# (defense/prose: framework cataloging, not operational mechanism content). Motivated by the
+# source-confound diagnostic (scripts/diag_source_tsne.py): framework-metadata register dominated
+# the representation geometry. Set false to retain the full labeled pool.
+prune_framework_metadata: true
+
+# GitHub blue-team supplements (operational defense, fetched via repo tarball = intended distribution).
+# Tagged into D3FEND tactics (topic). SOC-Assistant-Guide = detection/DFIR depth (MIT); BlueTeam-Tools =
+# tool-knowledge breadth (no license -> local build only, URL+hash release, text not redistributed).
+github_supplements:
+  - owner: H3llKa1ser
+    repo: SOC-Assistant-Guide
+    ref: main
+    license: MIT
+  - owner: A-poc
+    repo: BlueTeam-Tools
+    ref: main
+    license: "none (all-rights-reserved; local build only, URL+hash release)"
+
+# Post-prune cleanup filters (reproducible, applied in analysis_units.main after the prune;
+# motivated by reports/corpus_quality_audit.md). Set cleanup_enabled false to skip.
+cleanup_enabled: true
+cleanup:
+  offense_tiny_chars: 250          # drop offense units shorter than this (IOC / hash dumps)
+  offense_neardup_jaccard: 0.85    # collapse offense MinHash near-dups >= this (keep 1/cluster)
+  dual_max_nonprose_ratio: 0.5     # drop dual units with >this non-prose char ratio (debug/traceroute dumps)
+  dual_max_longtoken_ratio: 0.3    # drop dual units with >this fraction of chars in >30-char tokens (base64 blobs)
+  dual_short_fragment_chars: 500   # below this, drop dual fragments that are truncation/exercise (keep coherent prose)
+
+# WMDP-style operational-capability quality filter (offensive external docs only).
+# Each scraped offensive document is scored 0-10 on whether it contains procedural
+# knowledge or code enabling offensive operations; documents scoring >= this
+# threshold are kept. No quality filter is applied to the defensive corpus.
+wmdp_keep_threshold: 7
+
+# Anthropic model used as the WMDP rater (via the Message Batches API).
+wmdp_rater_model: claude-sonnet-4-6
+
+# Post-extraction stub filter: drop any scraped document shorter than this many
+# characters. Applies to BOTH corpora (targets web stubs / error pages).
+stub_min_chars: 2000
+
+# Scraper politeness.
+scrape_user_agent: "entanglement-research-corpus/0.1 (academic research; contact kamachee@wisc.edu)"
+scrape_per_host_interval_sec: 1.0

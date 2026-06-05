@@ -1,0 +1,45 @@
+# Security-vendor hosts for the D3FEND reference source bucket (VENDOR).
+#
+# Methodology choice, kept in config (not source) so reviewers can audit and
+# revise it without touching code. classify_source() returns VENDOR when a
+# reference URL's host *contains* any substring below. Matches are positive and
+# substring-based (so "unit42" catches unit42.paloaltonetworks.com, and a bare
+# brand like "symantec" catches its various TLDs). Genuinely-unknown hosts still
+# fall through to OTHER, which is reviewed separately before any keep/drop.
+#
+# These are first-party security vendors / threat-intel publishers whose blogs
+# and advisories carry operational capability content. NOT academic (those go to
+# ACADEMIC), NOT standards bodies (NIST/RFC have their own buckets).
+vendor_hosts:
+  - microsoft.com
+  - crowdstrike.com
+  - mandiant.com
+  - fireeye.com
+  - paloaltonetworks.com
+  - unit42
+  - talosintelligence.com
+  - cisco.com
+  - symantec
+  - broadcom.com
+  - trendmicro.com
+  - kaspersky.com
+  - securelist.com
+  - sentinelone.com
+  - redhat.com
+  - vmware.com
+  - elastic.co
+  - splunk.com
+  - tenable.com
+  - rapid7.com
+  - sophos.com
+  - fortinet.com
+  - mcafee.com
+  - secureworks.com
+  - welivesecurity.com
+  - eset.com
+  - checkpoint.com
+  - research.checkpoint.com
+  - googleprojectzero
+  - cloud.google.com
+  - aws.amazon.com
+  - apple.com

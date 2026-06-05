@@ -1,0 +1,54 @@
+version: v1
+frozen_utc: '2026-06-05T04:24:46.449209+00:00'
+source_parquet: data/analysis_units.parquet
+frozen_parquet: data/analysis_units_v1.parquet
+sha256: da9453ad863320b229ff0ed17ffd0bd06d47acae04ade439a65229de7e4d67d7
+n_units: 24646
+n_chars: 64204476
+by_bucket:
+  defense: 2900
+  dual: 3572
+  offense: 18174
+by_layer:
+  defense_external: 2754
+  external_supplement: 146
+  offense_external: 18174
+  substrate: 3572
+config:
+  prune_framework_metadata: true
+  cleanup_enabled: true
+  cleanup:
+    offense_tiny_chars: 250
+    offense_neardup_jaccard: 0.85
+    dual_max_nonprose_ratio: 0.5
+    dual_max_longtoken_ratio: 0.3
+    dual_short_fragment_chars: 500
+  github_supplements:
+  - owner: H3llKa1ser
+    repo: SOC-Assistant-Guide
+    ref: main
+    license: MIT
+  - owner: A-poc
+    repo: BlueTeam-Tools
+    ref: main
+    license: none (all-rights-reserved; local build only, URL+hash release)
+source_tiers:
+  offense_external: URL+hash only (ATT&CK-cited third-party literature; mixed licenses)
+  defense_external: URL+hash only (D3FEND-cited third-party literature; mixed licenses)
+  external_supplement: 'GitHub blue-team repos via tarball: SOC-Assistant-Guide (MIT,
+    redistributable w/ attribution) + BlueTeam-Tools (no license -> URL+hash only,
+    text not redistributed)'
+  substrate: 'mixed: RFCs/MDN/FIPS redistributable; OSTEP/Boneh/IntelSDM/Nmap pointer+hash
+    only'
+provenance_notes:
+- Offense/defense are external-reference-only (framework-internal procedure/prose
+  pruned).
+- 'Offense cleaned: tiny IOC dumps dropped + MinHash near-dup collapse @0.85.'
+- 'Dual cleaned: >50% non-prose dumps + bad short fragments dropped.'
+- Defense supplemented with GitHub blue-team repos (SOC-Assistant-Guide + BlueTeam-Tools),
+  tagged into D3FEND tactics (topic); inferred tactic, authoritative d3fend_ids left
+  empty.
+- Cross-bucket contamination checked and removed (keep-order offense>dual>defense);
+  0 remain.
+- 'Standing caveat: bucket separability is topic/register-confounded; valence claims
+  require the unlearning-tax experiment, not separability.'

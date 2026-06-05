@@ -1,0 +1,39 @@
+[project]
+name = "entanglement"
+version = "0.1.0"
+description = "MITRE-grounded three-way-tagged cyber corpus for measuring offense/defense capability entanglement in LLMs"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mitreattack-python>=3.0.0",   # MitreAttackData STIX 2.1 traversal
+    "polars>=1.0.0",               # heavy joins over the 14k mappings table
+    "rdflib>=7.0.0",               # D3FEND OWL / RDF parsing
+    "pyyaml>=6.0",                 # configs (subcapabilities, sources)
+    "httpx>=0.27.0",               # pinned source fetches + scraping client
+    "trafilatura>=1.8.0",          # HTML main-text extraction (scraping)
+    "pypdf>=4.0.0",                # PDF text extraction (scraping)
+    "anthropic>=0.40.0",           # WMDP operational-capability rater (Batches API)
+    "scikit-learn>=1.9.0",
+    "fastembed>=0.8.0",
+    "matplotlib>=3.10.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/entanglement"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,102 @@
+"""Load methodology parameters from configs/.
+
+Methodology choices (source buckets to keep, the WMDP threshold, the vendor host
+list, scraper politeness) live in ``configs/*.yaml`` rather than in source so a
+reviewer can audit and revise them without touching code. Modules call these
+loaders at import time to populate their module-level constants; the pure
+``build_*`` functions still accept explicit values so tests stay offline and
+config-independent.
+"""
+
+from __future__ import annotations
+
+import functools
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+CONFIG_DIR = ROOT / "configs"
+
+
+@functools.lru_cache(maxsize=None)
+def _load_yaml(path: Path) -> dict[str, Any]:
+    with path.open() as f:
+        return yaml.safe_load(f) or {}
+
+
+def load_corpus_config() -> dict[str, Any]:
+    """Return the parsed configs/corpus.yaml mapping."""
+    return _load_yaml(CONFIG_DIR / "corpus.yaml")
+
+
+def load_vendor_hosts() -> list[str]:
+    """Return the VENDOR host substrings from configs/vendor_hosts.yaml."""
+    return list(_load_yaml(CONFIG_DIR / "vendor_hosts.yaml").get("vendor_hosts", []))
+
+
+def defense_keep_buckets() -> frozenset[str]:
+    """D3FEND source buckets to keep for the defensive external corpus."""
+    return frozenset(load_corpus_config().get("defense_keep_buckets", []))
+
+
+def defense_keep_other_curated() -> bool:
+    """Whether to fold the curated OTHER bucket into the defensive external set."""
+    return bool(load_corpus_config().get("defense_keep_other_curated", False))
+
+
+def defense_other_drop_hosts() -> list[str]:
+    """Noise hosts (substring match) to drop from the curated OTHER bucket."""
+    return list(load_corpus_config().get("defense_other_drop_hosts", []))
+
+
+def wmdp_keep_threshold() -> int:
+    """Minimum WMDP operational-capability score to keep an offensive doc."""
+    return int(load_corpus_config().get("wmdp_keep_threshold", 7))
+
+
+def wmdp_rater_model() -> str:
+    """Anthropic model id used as the WMDP rater."""
+    return str(load_corpus_config().get("wmdp_rater_model", "claude-sonnet-4-6"))
+
+
+def prune_framework_metadata() -> bool:
+    """Whether to drop framework-internal cataloging layers (offense/procedure, defense/prose)
+    when assembling analysis units — keeping offense/defense external-reference-only + symmetric."""
+    return bool(load_corpus_config().get("prune_framework_metadata", True))
+
+
+def github_supplements() -> list[dict]:
+    """GitHub blue-team supplement repos (owner/repo/ref/license) for the defense bucket."""
+    return list(load_corpus_config().get("github_supplements", []))
+
+
+def cleanup_enabled() -> bool:
+    """Whether to apply the post-prune offense/dual cleanup filters when assembling analysis units."""
+    return bool(load_corpus_config().get("cleanup_enabled", True))
+
+
+def cleanup_params() -> dict[str, Any]:
+    """Thresholds for the cleanup filters (see configs/corpus.yaml `cleanup:`)."""
+    c = load_corpus_config().get("cleanup", {}) or {}
+    return {
+        "offense_tiny_chars": int(c.get("offense_tiny_chars", 250)),
+        "offense_neardup_jaccard": float(c.get("offense_neardup_jaccard", 0.85)),
+        "dual_max_nonprose_ratio": float(c.get("dual_max_nonprose_ratio", 0.5)),
+        "dual_max_longtoken_ratio": float(c.get("dual_max_longtoken_ratio", 0.3)),
+        "dual_short_fragment_chars": int(c.get("dual_short_fragment_chars", 500)),
+    }
+
+
+def stub_min_chars() -> int:
+    """Post-extraction stub threshold (chars); shorter documents are dropped."""
+    return int(load_corpus_config().get("stub_min_chars", 2000))
+
+
+def scrape_user_agent() -> str:
+    return str(load_corpus_config().get("scrape_user_agent", "entanglement-research-corpus/0.1"))
+
+
+def scrape_per_host_interval_sec() -> float:
+    return float(load_corpus_config().get("scrape_per_host_interval_sec", 1.0))

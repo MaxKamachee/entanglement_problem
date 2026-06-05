@@ -1,0 +1,72 @@
+# Subcapability taxonomy for the entanglement corpus.
+#
+# Offensive subcaps partition all 14 enterprise ATT&CK tactics; defensive
+# subcaps partition all 7 D3FEND tactics. This refines the spec's rough
+# offensive list (7) into a complete, gradient-preserving partition (10) so the
+# per-subcap entanglement profile stays informative (recon vs initial-access vs
+# impact are not collapsed together).
+#
+# Each ATT&CK technique is assigned to exactly one offensive subcap. When a
+# technique spans tactics in different subcaps, the earliest tactic in
+# `attack_tactic_priority` (kill-chain order) wins. Document this rule in
+# METHODOLOGY.md.
+
+offensive:
+  reconnaissance:                 # pre-compromise; the D3FEND graph is blind to it
+    attack_tactics: [reconnaissance, resource-development]
+  initial_access:
+    attack_tactics: [initial-access]
+  execution:
+    attack_tactics: [execution]
+  persistence_escalation:
+    attack_tactics: [persistence, privilege-escalation]
+  defense_evasion:
+    attack_tactics: [defense-evasion]
+  credential_access:
+    attack_tactics: [credential-access]
+  discovery_lateral_movement:
+    attack_tactics: [discovery, lateral-movement]
+  collection_exfiltration:
+    attack_tactics: [collection, exfiltration]
+  command_and_control:
+    attack_tactics: [command-and-control]
+  impact:
+    attack_tactics: [impact]
+
+defensive:
+  modeling:
+    d3fend_tactics: [Model]
+  hardening:
+    d3fend_tactics: [Harden]
+  detection:
+    d3fend_tactics: [Detect]
+  isolation:
+    d3fend_tactics: [Isolate]
+  active_response:
+    d3fend_tactics: [Deceive, Evict, Restore]
+
+# Kill-chain order; earliest-tactic-wins resolves multi-tactic techniques.
+attack_tactic_priority:
+  - reconnaissance
+  - resource-development
+  - initial-access
+  - execution
+  - persistence
+  - privilege-escalation
+  - defense-evasion
+  - credential-access
+  - discovery
+  - lateral-movement
+  - collection
+  - command-and-control
+  - exfiltration
+  - impact
+
+# Offensive subcaps the D3FEND graph structurally cannot map (pre-compromise).
+# Techniques in these subcaps are dual-use by construction (see the recon
+# paradox: high real-world dual-use, zero graph mappings).
+graph_blind_subcaps: [reconnaissance]
+
+# An ATT&CK technique is a dual-use topic if its contestedness is at/above this
+# percentile of the mapped-technique distribution (or it is graph-blind).
+dual_use_percentile: 0.75
