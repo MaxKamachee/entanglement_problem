@@ -4,6 +4,7 @@ Do we # Corpus Card — Offensive/Defensive Cyber-Capability Entanglement Corpus
 **Version: v1 — all corpus construction complete** (in-hand + external layers for offensive
 and defensive, plus the dual/substrate bucket). Generated 2026-06-03, completed 2026-06-04.*
 
+
 ## Motivation
 
 Two technique-tagged text corpora — one offensive, one defensive — built **only** from
