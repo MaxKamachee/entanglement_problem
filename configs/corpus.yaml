@@ -82,8 +82,8 @@ scrape_per_host_interval_sec: 1.0
 # off-the-shelf (MMLU computer_security + full MMLU) in the step-5 harness, not here.
 # Pipeline: generate (gen_model) -> critic validate (critic_model) -> trim to per_topic_n.
 mcq:
-  gen_model: claude-opus-4-8        # generation: strongest model for question quality
-  critic_model: claude-sonnet-4-6   # validation: cheaper + model-diverse second opinion
+  gen_model: claude-sonnet-4-6      # generation
+  critic_model: claude-sonnet-4-6   # validation (same model, different prompt/role)
   per_topic_n: 25                   # kept questions per cell after critic filtering + trim
   source_oversample: 2.0            # generate this multiple of per_topic_n (critic drops some)
   seed: 0                           # reproducibility (selection is deterministic by unit_id)
