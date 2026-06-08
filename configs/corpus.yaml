@@ -76,16 +76,27 @@ stub_min_chars: 2000
 scrape_user_agent: "entanglement-research-corpus/0.1 (academic research; contact kamachee@wisc.edu)"
 scrape_per_host_interval_sec: 1.0
 
-# Stage 4 — WMDP-style MCQ eval generation (offense + defense, per topic).
-# Cells are per-topic: attack = ATT&CK tactics, defend = D3FEND tactics (Deceive/
-# Evict/Restore merged into active_response). Dual/benign capability is measured
-# off-the-shelf (MMLU computer_security + full MMLU) in the step-5 harness, not here.
-# Pipeline: generate (gen_model) -> critic validate (critic_model) -> trim to per_topic_n.
+# Stage 4 — WMDP-style MCQ eval generation (3 regions, per topic), doc-level sourcing.
+# Regions/cells: attack = ATT&CK tactics (kill-chain-primary), defend = D3FEND tactics
+# (Deceive/Evict/Restore merged into active_response), substrate = shared-knowledge topics.
+# Sources are coherent SECTIONS of the document corpora (offensive_documents /
+# defensive_documents + supplement / substrate_corpus), NOT the embedding units.
+# Pipeline: section -> generate (gen_model) -> graded critic (critic_model) ->
+# contamination filter -> answer-position balance -> trim to per_topic_n.
+# MMLU computer_security + full MMLU remain the far-general control in step 5 (not here).
 mcq:
   gen_model: claude-sonnet-4-6      # generation
   critic_model: claude-sonnet-4-6   # validation (same model, different prompt/role)
-  per_topic_n: 25                   # kept questions per cell after critic filtering + trim
-  source_oversample: 2.0            # generate this multiple of per_topic_n (critic drops some)
-  seed: 0                           # reproducibility (selection is deterministic by unit_id)
-  min_source_chars: 800             # source-unit floor: enough content to ground a question
+  per_topic_n: 25                   # kept questions per cell after critic + contamination + trim
+  source_oversample: 2.0            # sample this multiple of per_topic_n sections (critic drops some)
+  seed: 0                           # reproducibility (selection is deterministic by section_id hash)
+  min_source_chars: 800             # section floor: enough content to ground a question
   smoke_n: 3                        # questions/cell in the --smoke pilot run
+  section_target: 4000              # coherent-section target size (chars)
+  section_hard_max: 6000            # section hard cap (chars)
+  max_sections_per_doc: 3           # cap sections taken per source doc (cross-doc diversity)
+  defend_exclude_source_categories: # policy/compliance sources dropped from DEFEND (operational focus)
+    - NIST_SP_800
+    - US_GOV_CISA
+  contamination_ngram: 8            # a question stem sharing an n-gram with the corpus = contamination
+  max_cost_usd: 50.0                # abort before submitting if estimated batch cost exceeds this

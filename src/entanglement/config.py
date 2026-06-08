@@ -98,13 +98,20 @@ def mcq_config() -> dict[str, Any]:
     """Stage-4 MCQ generation parameters (see configs/corpus.yaml `mcq:`)."""
     c = load_corpus_config().get("mcq", {}) or {}
     return {
-        "gen_model": str(c.get("gen_model", "claude-opus-4-8")),
+        "gen_model": str(c.get("gen_model", "claude-sonnet-4-6")),
         "critic_model": str(c.get("critic_model", "claude-sonnet-4-6")),
         "per_topic_n": int(c.get("per_topic_n", 25)),
         "source_oversample": float(c.get("source_oversample", 2.0)),
         "seed": int(c.get("seed", 0)),
         "min_source_chars": int(c.get("min_source_chars", 800)),
         "smoke_n": int(c.get("smoke_n", 3)),
+        "section_target": int(c.get("section_target", 4000)),
+        "section_hard_max": int(c.get("section_hard_max", 6000)),
+        "max_sections_per_doc": int(c.get("max_sections_per_doc", 3)),
+        "defend_exclude_source_categories": list(
+            c.get("defend_exclude_source_categories", ["NIST_SP_800", "US_GOV_CISA"])),
+        "contamination_ngram": int(c.get("contamination_ngram", 8)),
+        "max_cost_usd": float(c.get("max_cost_usd", 50.0)),
     }
 
 

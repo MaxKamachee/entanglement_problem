@@ -777,58 +777,50 @@ repos aren't ATT&CK-cited, unlike MS threat-intel). Re-frozen v1: **offense 18,1
 Regeneration order: `supplement_github → analysis_units → contamination → corpus_freeze`. Tests:
 `tests/test_supplement_github.py`, `tests/test_corpus_validate.py`.
 
-## 2026-06-05 — Stage 4: WMDP-style MCQ eval generation (offense + defense, per topic)
+## 2026-06-05 — Stage 4: WMDP-style MCQ eval (3 regions, doc-level sourcing)
 
-**Purpose.** Build the measurement instrument the unlearning experiments (step 5) consume. The 5-step
-minimal-paper arc: (1) data ✓; (2) crude offense/defense forget/retain baseline; (3) smart harmless/dual/
-harmful split (method); (4) **this stage — agent-written MCQ evals**; (5) unlearning runs showing the
-three-way split gives more precise interventions. Module: `src/entanglement/mcq.py`; tests:
-`tests/test_mcq.py`; config: `configs/corpus.yaml` `mcq:` → `config.mcq_config()`. **Not yet executed**
-(awaiting API credits); the module + tests are fully verified offline against a `FakeClient`.
+**Purpose.** The v1 capability benchmark the unlearning experiments (step 5) consume. Module
+`src/entanglement/mcq.py`; tests `tests/test_mcq.py`; config `configs/corpus.yaml` `mcq:` →
+`config.mcq_config()`. All Sonnet, Batch API. Verified offline (172 tests, `FakeClient`); generation
+awaits the API key.
 
-**Three-band eval, two generated here.** We *generate* only the two bands no off-the-shelf benchmark fills
-cleanly: **attack MCQs** (offense bucket → region `attack`) = the forget target; **defend MCQs** (defense
-bucket → region `defend`) = the *near-neighbor* harmless defensive-cyber capability whose collateral loss is
-the entanglement claim. The **benign/dual** band is measured off-the-shelf in step 5 (MMLU
-`computer_security` mid-band + full MMLU far-band) — not generated. Rationale for not using MMLU-compsec
-*as* the defend eval: it is valence-mixed (~100 Q, contains offensive items), aggregate, and not
-topic-aligned, so it cannot carry the per-subcapability "targeted preservation" result. Dual corpus units
-are skipped by `assign_cell`.
+**Three regions, generated here (MMLU is the far-general control in step 5, not generated).**
+- **attack** — offensive capability (forget target). Source `offensive_documents.parquet`.
+- **defend** — *operational* defensive capability (near-neighbor; the entanglement claim). Source
+  `defensive_documents.parquet` (D3FEND-cited) + `defensive_supplement_github.parquet`. **Policy/compliance
+  sources (NIST_SP_800, US_GOV_CISA) are excluded** (`classify_defense_source(url)`), so questions probe
+  detection/hardening/isolation/response *mechanism*, not governance. This is the key fix: under uniform
+  sampling NIST dominated `Model`/`Isolate` (60–84% of units), making defend a compliance quiz.
+- **substrate** — shared crypto/OS/networking knowledge, the likely *mechanism* of entanglement. Source
+  `substrate_corpus.parquet`.
 
-**Cells = per-topic** (not subcapability). `assign_cell(bucket, topic)`: offense→`(attack, <ATT&CK
-tactic>)`; defense→`(defend, <D3FEND tactic>)` with **Deceive+Evict+Restore merged → `active_response`**
-(matching the `configs/subcapabilities.yaml` grouping; corpus v1 has only Deceive=3/Evict=74/Restore=2
-units, too thin to source N each); dual / None-topic → dropped. On corpus v1 this yields **19 cells: 14
-attack + 5 defend** (Model, Isolate, Harden, Detect, active_response).
+**Doc-level sourcing (replaces the earlier analysis-units sourcing).** `build_sections` reads the three
+document corpora and `clean_text`+`resegment`s each doc into coherent ~4000-char sections (hard_max 6000),
+capping `max_sections_per_doc=3` for cross-doc diversity. Coherent passages beat the embedding-normalized
+units (which split sections), and the document tables carry provenance (`url`→source_category, `tactics`),
+which the slim frozen `analysis_units` had dropped. **Cell assignment:** attack = the doc's **kill-chain-
+primary** ATT&CK tactic (earliest in `KILL_CHAIN`; fixes the alphabetical "collection" inflation of the old
+first-list-element rule); defend = D3FEND tactic with **Deceive/Evict/Restore → `active_response`**;
+substrate = `topic`. Yield (n=25, oversample 2.0): **25 cells, ~1,133 sources** — attack 14 (all ~50, exfil
+36), substrate 6 (all 50), defend 5 (Detect 50/Harden 46/Isolate 29; **Model 13 + active_response 9 come in
+under N — reported, not padded:** operational non-NIST defensive content is genuinely thin there → flagged
+as v2 corpus-expansion work).
 
-**Source selection (`select_sources`, deterministic, no API).** Per cell, filter to `n_chars ≥
-min_source_chars` (800), then take the head of a `unit_id`-sorted (hash-order ≈ stable shuffle) list up to
-`ceil(per_topic_n × source_oversample)` units — reproducible without RNG. At `per_topic_n=25`,
-`oversample=2.0`: **930 source units** selected (≈50/cell; privilege-escalation only 30 — corpus-limited).
-The `unit_id`s whose generated question survives the critic are written to `data/mcq_source_units.parquet`
-as a **held-out set step 5 MUST exclude from unlearning training**, so questions test transferable
-capability, not verbatim recall of trained text.
+**Pipeline.** `select_sections` (deterministic head by `section_id` hash) → `generate_mcqs_batch`
+(`custom_id=section_id`; cached `GEN_SYSTEM` WMDP rubric: operational/self-contained/transferable, 4 distinct
+options, no giveaways; region-aware framing perform/detect-counter/apply-mechanism) → `critique_mcqs_batch`
+(graded **1–5** on `operational_focus`, `answer_defensibility`, `distractor_quality` + booleans
+`self_contained`,`single_correct`; **keep = all scores ≥3 ∧ both booleans**; `corrected_correct_index` fixes
+salvageable mislabels) → **contamination filter** (hashed 8-gram shingle set of the full corpus; drop any
+stem sharing a verbatim 8-gram = memorization guard) → **answer-position balance** (deterministic permute so
+correct index is ~uniform A–D) → `trim_to_n`. A **cost-cap** guard estimates batch spend before submitting
+and aborts over `max_cost_usd` (default $50). Surviving sections → `data/mcq_source_units.parquet`
+(held-out; step 5 MUST exclude from unlearning training).
 
-**Generation (`generate_mcqs_batch`, Batches API, `gen_model=claude-opus-4-8`).** One MCQ per source unit;
-`custom_id=unit_id` (idempotent). Cached system block (`GEN_SYSTEM`, billed once/batch) carries the
-WMDP-style rubric: probe a precursor/component *operational* capability (perform, for attack; detect/
-counter/mitigate, for defend); **self-contained** (answerable without the passage — the source text is NOT
-shown to the test-taker); transferable knowledge not verbatim recall; exactly 4 options, one correct,
-plausible same-form distractors, no length/grammar giveaways, no "all/none of the above". Structured
-json_schema output → `parse_mcq` validates (4 distinct non-empty options, in-range index).
+**Outputs.** `data/mcq_eval.parquet` (`MCQ_COLUMNS`: region/cell/source_category/source_url/options/
+correct_index/critic scores/…), `data/mcq_source_units.parquet`, `reports/mcq_eval_report.md` (per-cell
+counts + mean critic scores, contamination drops, answer-position distribution, 5 examples/cell).
 
-**Critic / validation (`critique_mcqs_batch`, Batches API, `critic_model=claude-sonnet-4-6`).** Second,
-model-diverse pass; `custom_id=question_id`. Rubric (`CRITIC_SYSTEM`) scores five booleans —
-`single_correct, distractors_plausible, no_giveaway, operational, self_contained` — plus a
-`corrected_correct_index` (used only to fix an otherwise-salvageable mislabeled answer). `finalize` joins
-verdicts, applies corrections, **keeps only items passing ALL five criteria**, and trims each cell to
-`per_topic_n` (deterministic by `question_id`).
-
-**Outputs.** `data/mcq_eval.parquet` (cols: `question_id, region, topic, cell, source_unit_ids, question,
-options, correct_index, rationale, capability_probed, gen_model, critic_model, critic_pass, critic_flags`),
-`data/mcq_source_units.parquet` (held-out set), `reports/mcq_eval_report.md` (per-cell counts + critic
-pass-rate + samples).
-
-**Run.** Smoke first: `ANTHROPIC_API_KEY=… uv run python -m entanglement.mcq --smoke` (3/cell ≈ 114
-sources) → inspect → scale: `uv run python -m entanglement.mcq` (n=25). Verbatim prompts: `GEN_SYSTEM` and
-`CRITIC_SYSTEM` in `src/entanglement/mcq.py`. Est. cost ≈ $25–30/full run (Opus gen dominates).
+**Run.** Pilot: `ANTHROPIC_API_KEY=… uv run python -m entanglement.mcq --smoke` (3/cell ≈ 150 sources, ~$1.3)
+→ review → full `uv run python -m entanglement.mcq` (n=25, ~$10). Verbatim prompts: `GEN_SYSTEM` /
+`CRITIC_SYSTEM` in `src/entanglement/mcq.py`.
