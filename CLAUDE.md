@@ -68,5 +68,20 @@ Unlearning methods: **MCU** + **RMU**. **Cyber first, bio later.**
   only `data/corpus_manifest.yaml` is tracked.
 - **Surface anomalies** rather than smoothing them over.
 
+## Codebase quickref
+
+- Tests/lint: `uv run pytest` (full suite, offline) and `uv run ruff check <files>`.
+- `content_hash` (SHA-256 unit/doc dedup key) lives in `entanglement.scrape` — not `units`/`normalize`.
+- New Claude-calling modules: copy `quality.py`'s Batches-API idiom — cached system block,
+  `custom_id=content_hash`, `output_config` json_schema, pure prompt-builder/parser split +
+  injectable `client` (lazy `import anthropic`), `FakeClient` test with `pytest.importorskip("anthropic")`.
+- Most `src/entanglement/*.py` are `python -m entanglement.<mod>` CLI stages, not imported —
+  a module with no importers is NOT dead code.
+- Config: add an `@functools.lru_cache` accessor in `config.py` reading `configs/corpus.yaml`;
+  pure `build_*` fns still take explicit values so tests stay config-independent.
+- Frozen corpus: `data/analysis_units_v1.parquet` — cols `unit_id, bucket{offense|dual|defense},
+  layer, topic, n_chars, text`; `topic` = ATT&CK tactic (offense) / D3FEND tactic, capitalized
+  (defense) / substrate concept (dual).
+
 See `README.md` for layout and `docs/METHODOLOGY.md` for the authoritative
 stage-by-stage record.
