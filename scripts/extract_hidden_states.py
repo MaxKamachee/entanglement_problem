@@ -55,6 +55,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--revision", default=None, help="pin a specific HF commit (default: main)")
     p.add_argument("--layers", type=int, nargs="+", default=DEFAULT_LAYERS,
                    help="hidden_states indices (0=embeddings, k=output of block k)")
+    p.add_argument("--buckets", nargs="+", default=list(BUCKETS),
+                   help="bucket labels to sample (default: offense dual defense; "
+                        "e.g. 'forget retain' for the WMDP-cyber calibration run)")
     p.add_argument("--n-per-corpus", type=int, default=200)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--max-tokens", type=int, default=MAX_TOKENS)
@@ -64,12 +67,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def stratified_sample(units, n_per_corpus: int, seed: int):
+def stratified_sample(units, n_per_corpus: int, seed: int, buckets=BUCKETS):
     """Uniform sample of up to ``n_per_corpus`` rows per bucket. Deterministic given the seed."""
     import polars as pl
 
     parts = []
-    for bucket in BUCKETS:
+    for bucket in buckets:
         b = units.filter(pl.col("bucket") == bucket)
         parts.append(b.sample(n=min(n_per_corpus, b.height), seed=seed) if b.height else b)
     return pl.concat(parts)
@@ -95,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         print("WARNING: no HF_TOKEN in env — gated Llama-3.1 load will fail.", file=sys.stderr)
 
     units = pl.read_parquet(corpus_path)
-    sample = stratified_sample(units, args.n_per_corpus, args.seed)
+    sample = stratified_sample(units, args.n_per_corpus, args.seed, buckets=args.buckets)
     counts = dict(sample.group_by("bucket").len().iter_rows())
     print(f"sampled {sample.height} docs {counts} (seed={args.seed})", flush=True)
 
