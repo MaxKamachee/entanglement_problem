@@ -77,6 +77,69 @@ def fmt_row(layer: int, cells: list[tuple[float, float]]) -> str:
     return f"| {layer} | " + " | ".join(f"{a:.3f} / {f:.3f}" for a, f in cells) + " |"
 
 
+def make_figures(wmdp: dict, ours: dict, wmdp_h: pl.DataFrame, ours_h: pl.DataFrame,
+                 fig_dir: Path) -> list[str]:
+    """PC-removal ladder + top-PC scatter figures. Returns relative figure paths."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[str] = []
+
+    # --- Fig 1: the ladder — accuracy vs PCs removed, per layer, both corpora ---
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharey=True)
+    for ax, (title, lad) in zip(axes, [("WMDP-cyber: forget vs retain", wmdp),
+                                       ("Ours: offense vs defense\n(within-pair PCs)", ours)]):
+        for layer, marker in zip(LAYERS, "osD"):
+            ax.plot(KS, [lad[layer][k][0] for k in range(len(KS))], marker=marker, label=f"layer {layer}")
+        ax.axhline(0.5, ls="--", c="gray", lw=1)
+        ax.text(2.55, 0.515, "chance", color="gray", fontsize=8)
+        ax.set_title(title, fontsize=11)
+        ax.set_xticks(KS)
+        ax.set_xticklabels(["0\n(center)", "1", "2", "3"])
+        ax.set_xlabel("top PCs removed")
+        ax.set_ylim(0.1, 1.02)
+    axes[0].set_ylabel("probe accuracy (binary)")
+    axes[0].legend(fontsize=9)
+    fig.suptitle("Does the forget/retain split survive removing the biggest variance directions?", fontsize=11)
+    fig.tight_layout()
+    p = fig_dir / "wmdp_ladder.png"
+    fig.savefig(p, dpi=150)
+    plt.close(fig)
+    paths.append(str(p))
+
+    # --- Fig 2: where the separation lives — top-2 PCs vs PCs 3-4, layer 28 ---
+    def pcs(h: pl.DataFrame, labels: tuple[str, str]):
+        s = h.filter((pl.col("layer") == 28) & pl.col("corpus_label").is_in(labels))
+        X = np.array(s["embedding"].to_list())
+        Xc = X - X.mean(0)
+        _, _, Vt = np.linalg.svd(Xc, full_matrices=False)
+        return Xc @ Vt[:4].T, s["corpus_label"].to_numpy()
+
+    fig, axes = plt.subplots(2, 2, figsize=(9, 8))
+    for row, (name, h, labels) in enumerate([("WMDP-cyber", wmdp_h, ("forget", "retain")),
+                                             ("Ours", ours_h, ("offense", "defense"))]):
+        P, lab = pcs(h, labels)
+        for col, (i, j, sub) in enumerate([(0, 1, "PC1 vs PC2 (what gets removed)"),
+                                           (2, 3, "PC3 vs PC4 (what remains)")]):
+            ax = axes[row][col]
+            for cls, color in zip(labels, ("tab:red", "tab:blue")):
+                m = lab == cls
+                ax.scatter(P[m, i], P[m, j], s=8, alpha=0.55, c=color, label=cls)
+            ax.set_title(f"{name} — {sub}", fontsize=10)
+            ax.set_xlabel(f"PC{i + 1}")
+            ax.set_ylabel(f"PC{j + 1}")
+            ax.legend(fontsize=8)
+    fig.suptitle("Layer 28: class separation is concentrated in the top PCs", fontsize=12)
+    fig.tight_layout()
+    p = fig_dir / "wmdp_pc_scatter.png"
+    fig.savefig(p, dpi=150)
+    plt.close(fig)
+    paths.append(str(p))
+    return paths
+
+
 def main() -> None:
     if not WMDP_HIDDEN.exists():
         sys.exit(f"{WMDP_HIDDEN.relative_to(ROOT)} not found — run the GPU extraction first "
@@ -181,8 +244,15 @@ def main() -> None:
              "substrate-domain analysis was run on WMDP (no substrate labels; that analysis already "
              "produced a confound artifact on our data).")
 
+    fig_paths = make_figures(wmdp, ours, wmdp_h, ours_h, ROOT / "reports" / "figures")
+    L.append("")
+    L.append("## Figures")
+    for p in fig_paths:
+        rel = Path(p).relative_to(ROOT / "reports")
+        L.append(f"\n![{Path(p).stem}]({rel})")
+
     REPORT.write_text("\n".join(L))
-    print(f"wrote {REPORT.relative_to(ROOT)}")
+    print(f"wrote {REPORT.relative_to(ROOT)} + {len(fig_paths)} figures")
     for layer in LAYERS:
         print(f"  WMDP L{layer}: " + "  ".join(f"k{k}={a:.3f}" for k, (a, _) in zip(KS, wmdp[layer])))
 

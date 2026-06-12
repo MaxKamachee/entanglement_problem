@@ -36,3 +36,9 @@ Reference, our 3-way probe (chance 0.333): L28 base 0.950 → drop-3 **0.808** (
 - WMDP-cyber forget/retain separability **collapses** under within-task PC removal, matching our corpus: in both, the binary split is concentrated in a few dominant variance directions (consistent with register/topic confounds, with the mechanical-removal caveat above applying to both).
 - **Layer contrast.** Drop-3 survival (acc > 0.65) — WMDP: layers [4, 16] (L4 0.802, L16 0.785, L28 0.250); ours: layers none (L4 0.237, L16 0.205, L28 0.170). The two splits do NOT share one profile: where they survive/collapse differs by depth, so any single-verdict reading is an oversimplification.
 - Either way this is separability calibration only: no entanglement claim, and no substrate-domain analysis was run on WMDP (no substrate labels; that analysis already produced a confound artifact on our data).
+
+## Figures
+
+![wmdp_ladder](figures/wmdp_ladder.png)
+
+![wmdp_pc_scatter](figures/wmdp_pc_scatter.png)
