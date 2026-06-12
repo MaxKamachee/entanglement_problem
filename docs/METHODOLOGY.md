@@ -824,3 +824,16 @@ counts + mean critic scores, contamination drops, answer-position distribution, 
 **Run.** Pilot: `ANTHROPIC_API_KEY=… uv run python -m entanglement.mcq --smoke` (3/cell ≈ 150 sources, ~$1.3)
 → review → full `uv run python -m entanglement.mcq` (n=25, ~$10). Verbatim prompts: `GEN_SYSTEM` /
 `CRITIC_SYSTEM` in `src/entanglement/mcq.py`.
+
+## 2026-06-11 — WMDP-cyber geometry calibration (side analysis, read-only vs corpus)
+
+Calibrated the PCA-confound protocol against WMDP-cyber's published forget/retain text corpora
+(`cais/wmdp-corpora` @ `daf89fa9`, sha256-pinned; forget 1,000 / retain 4,473 docs → our unit
+pipeline → 3,917 / 14,738 units; 200/split, seed 0; Llama-3.1-8B layers 4/16/28; binary probe,
+chance 0.5). Identical treatment for both corpora; within-task PC removal carries a stated
+mechanical-removal caveat. **Result** (`reports/wmdp_cyber_geometry_baseline.md`, reproduce via
+`scripts/prep_wmdp_units.py` + pod extraction + `scripts/diag_wmdp_geometry.py`): WMDP survives
+drop-3 at L4/L16 (0.80/0.79) but collapses at L28 (0.97 → 0.25 by drop-2); ours collapses at every
+layer under the same within-pair protocol (L28 0.95 → 0.22) while surviving global-PC removal
+(L28 0.94 @ drop-3). No single verdict: the splits' low-dimensionality differs by depth. Method
+calibration only — separability ≠ entanglement; no substrate analysis on WMDP (no labels).

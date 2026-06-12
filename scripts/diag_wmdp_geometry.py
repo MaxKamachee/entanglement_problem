@@ -166,6 +166,17 @@ def main() -> None:
     L.append(f"- WMDP L28: base {w28[0][0]:.3f} → drop-2 {w28[2][0]:.3f} → drop-3 {w28[3][0]:.3f}. "
              f"Ours L28 (same protocol): {o28[0][0]:.3f} → {o28[2][0]:.3f} → {o28[3][0]:.3f}.")
     L.append(f"- {verdict}")
+    # per-layer contrast: does drop-3 survival differ across layers / corpora?
+    surv_at = lambda lad, layer: lad[layer][3][0] > 0.65  # noqa: E731
+    wmdp_surv = [layer for layer in LAYERS if surv_at(wmdp, layer)]
+    ours_surv = [layer for layer in LAYERS if surv_at(ours, layer)]
+    if wmdp_surv != ours_surv:
+        L.append(f"- **Layer contrast.** Drop-3 survival (acc > 0.65) — WMDP: layers {wmdp_surv or 'none'} "
+                 f"(L4 {wmdp[4][3][0]:.3f}, L16 {wmdp[16][3][0]:.3f}, L28 {wmdp[28][3][0]:.3f}); "
+                 f"ours: layers {ours_surv or 'none'} "
+                 f"(L4 {ours[4][3][0]:.3f}, L16 {ours[16][3][0]:.3f}, L28 {ours[28][3][0]:.3f}). "
+                 "The two splits do NOT share one profile: where they survive/collapse differs by depth, "
+                 "so any single-verdict reading is an oversimplification.")
     L.append("- Either way this is separability calibration only: no entanglement claim, and no "
              "substrate-domain analysis was run on WMDP (no substrate labels; that analysis already "
              "produced a confound artifact on our data).")
