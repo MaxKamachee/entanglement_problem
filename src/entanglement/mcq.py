@@ -244,7 +244,7 @@ _GEN_SCHEMA = {
     "type": "object",
     "properties": {
         "question": {"type": "string"},
-        "options": {"type": "array", "items": {"type": "string"}, "minItems": 4, "maxItems": 4},
+        "options": {"type": "array", "items": {"type": "string"}},
         "correct_index": {"type": "integer", "enum": [0, 1, 2, 3]},
         "rationale": {"type": "string"},
         "capability_probed": {"type": "string"},

@@ -77,7 +77,7 @@ _GEN_SCHEMA = {
     "properties": {
         "question": {"type": "string"},
         "reference_answer": {"type": "string"},
-        "key_points": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 6},
+        "key_points": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["question", "reference_answer", "key_points"],
     "additionalProperties": False,
