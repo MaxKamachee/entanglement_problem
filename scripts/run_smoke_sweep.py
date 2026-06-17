@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -62,19 +63,29 @@ def main(argv: list[str] | None = None) -> int:
         for coeff in args.coeffs:
             tag = f"{arm}_c{int(coeff)}"
             eval_json = out / f"{tag}.json"
-            if coeff == 0:
-                model_path = args.model            # base model = the c=0 baseline point
-            else:
-                model_path = str(out / "ckpts" / tag)
-                run([sys.executable, str(SCRIPTS / "unlearn_rmu.py"),
-                     "--model", args.model,
-                     "--forget-parquet", cfg["forget_parquet"], "--forget-buckets", *cfg["forget_buckets"],
-                     "--retain-parquet", cfg["retain_parquet"], "--retain-buckets", *cfg["retain_buckets"],
-                     "--layer", str(args.layer), "--coeff", str(coeff), "--alpha", str(args.alpha),
-                     "--steps", str(args.steps), "--seed", str(args.seed), "--out", model_path])
-            run([sys.executable, str(SCRIPTS / "eval_suite.py"),
-                 "--model", model_path, "--tag", tag, "--seed", str(args.seed),
-                 "--out", str(eval_json), *extra])
+            if eval_json.exists():
+                print(f"skip {tag} (already done)", flush=True)   # resume: keep prior points
+                continue
+            ckpt = out / "ckpts" / tag
+            try:
+                if coeff == 0:
+                    model_path = args.model        # base model = the c=0 baseline point
+                else:
+                    model_path = str(ckpt)
+                    run([sys.executable, str(SCRIPTS / "unlearn_rmu.py"),
+                         "--model", args.model,
+                         "--forget-parquet", cfg["forget_parquet"], "--forget-buckets", *cfg["forget_buckets"],
+                         "--retain-parquet", cfg["retain_parquet"], "--retain-buckets", *cfg["retain_buckets"],
+                         "--layer", str(args.layer), "--coeff", str(coeff), "--alpha", str(args.alpha),
+                         "--steps", str(args.steps), "--seed", str(args.seed), "--out", model_path])
+                run([sys.executable, str(SCRIPTS / "eval_suite.py"),
+                     "--model", model_path, "--tag", tag, "--seed", str(args.seed),
+                     "--out", str(eval_json), *extra])
+            except subprocess.CalledProcessError as e:
+                print(f"[WARN] {tag} failed ({e}); continuing", flush=True)
+            finally:
+                if coeff != 0:                      # delete the 16GB ckpt right after eval (disk bound)
+                    shutil.rmtree(ckpt, ignore_errors=True)
     print(f"sweep complete -> {out}", flush=True)
     return 0
 
