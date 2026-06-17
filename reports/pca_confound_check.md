@@ -48,8 +48,8 @@ PCs = register/format/magnitude), not substrate semantics.
 **Verdict: no substrate-sharing claim is supported by document-embedding geometry.**
 Coarse bucket separation is real (Check 1, layer 28); fine-grained substrate-domain
 attribution is confound-dominated. Establishing genuine shared-substrate reliance
-requires confound-controlled or causal designs — the Fisher-overlap pilot
-(parameter-space importance overlap) and ultimately the unlearning-tax experiment.
+requires a causal design — the unlearning experiment (does forgetting offense
+collaterally degrade defensive/substrate capability?), not embedding geometry.
 
 **Caveats.** Pre-supplement 200/bucket sample; thin dual-domain centroids (recon n=13,
 architecture n=12 at layer 28); hard nearest-centroid assignment.

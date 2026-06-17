@@ -100,3 +100,23 @@ mcq:
     - US_GOV_CISA
   contamination_ngram: 8            # a question stem sharing an n-gram with the corpus = contamination
   max_cost_usd: 50.0                # abort before submitting if estimated batch cost exceeds this
+
+# SAQ smoke-test eval (short-answer, free-response) — generation + LLM-judge grading.
+# Items generated from corpus sections (same doc-level sourcing + defend NIST/CISA exclusion
+# as mcq); answers produced on-GPU by eval_suite.py, then graded by a cheap judge here.
+saq:
+  gen_model: claude-sonnet-4-6              # SAQ generation
+  judge_model: claude-haiku-4-5-20251001    # cheap grader (validate vs a hand-checked sample)
+  per_cell_n: 20                            # SAQ items per cell
+  source_oversample: 1.5                    # sections sampled per cell (no critic stage here)
+
+# RMU unlearning for the smoke sweep (scripts/unlearn_rmu.py, GPU). Steering coeff swept to
+# trace a Pareto curve; coeff 0 = the pre-unlearning baseline point.
+rmu:
+  model: meta-llama/Llama-3.1-8B-Instruct
+  layer: 7                          # mid-layer whose MLP-residual activations RMU steers
+  coeffs: [0, 5, 20, 100, 300, 1000]  # steering strengths (0 = base-model baseline)
+  alpha: 1200.0                     # retain-anchor weight (L2 to frozen base activations)
+  steps: 500                        # update steps per run
+  seed: 0
+  max_tokens: 512                   # truncation for forget/retain text during unlearning

@@ -115,6 +115,31 @@ def mcq_config() -> dict[str, Any]:
     }
 
 
+def saq_config() -> dict[str, Any]:
+    """SAQ smoke-test eval parameters (see configs/corpus.yaml `saq:`)."""
+    c = load_corpus_config().get("saq", {}) or {}
+    return {
+        "gen_model": str(c.get("gen_model", "claude-sonnet-4-6")),
+        "judge_model": str(c.get("judge_model", "claude-haiku-4-5-20251001")),
+        "per_cell_n": int(c.get("per_cell_n", 20)),
+        "source_oversample": float(c.get("source_oversample", 1.5)),
+    }
+
+
+def rmu_config() -> dict[str, Any]:
+    """RMU unlearning parameters for the smoke sweep (see configs/corpus.yaml `rmu:`)."""
+    c = load_corpus_config().get("rmu", {}) or {}
+    return {
+        "model": str(c.get("model", "meta-llama/Llama-3.1-8B-Instruct")),
+        "layer": int(c.get("layer", 7)),
+        "coeffs": list(c.get("coeffs", [0, 5, 20, 100, 300, 1000])),
+        "alpha": float(c.get("alpha", 1200.0)),
+        "steps": int(c.get("steps", 500)),
+        "seed": int(c.get("seed", 0)),
+        "max_tokens": int(c.get("max_tokens", 512)),
+    }
+
+
 def scrape_user_agent() -> str:
     return str(load_corpus_config().get("scrape_user_agent", "entanglement-research-corpus/0.1"))
 
