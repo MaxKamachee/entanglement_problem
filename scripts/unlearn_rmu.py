@@ -91,53 +91,57 @@ def main(argv: list[str] | None = None) -> int:
         return m
 
     updated, frozen = load(True), load(False)
-    n_layers = updated.config.num_hidden_layers
-    if not (0 <= args.layer < n_layers):
-        sys.exit(f"--layer {args.layer} out of range 0..{n_layers - 1}")
-    update_ids = [i for i in range(max(0, args.layer - args.update_layers + 1), args.layer + 1)]
-    params = []
-    for i in update_ids:
-        w = updated.model.layers[i].mlp.down_proj.weight
-        w.requires_grad_(True)
-        params.append(w)
-    opt = torch.optim.AdamW(params, lr=args.lr)
-    device = next(updated.parameters()).device
-    hidden = updated.config.hidden_size
-
-    # fixed random control vector (unit norm * coeff), per the RMU reference
-    cv = torch.rand(1, 1, hidden, device=device, dtype=torch.bfloat16)
-    cv = cv / cv.norm() * args.coeff
-
-    def acts(model, texts, idx):
-        batch = texts[idx % len(texts): idx % len(texts) + args.batch_size] or texts[:args.batch_size]
-        enc = tok(batch, return_tensors="pt", padding=True, truncation=True,
-                  max_length=args.max_tokens).to(device)
-        out = model(**enc, output_hidden_states=True)
-        h = out.hidden_states[args.layer + 1]            # output of block `layer`
-        mask = enc["attention_mask"].unsqueeze(-1)
-        return h, mask
-
-    mse = torch.nn.MSELoss()
-    for step in range(args.steps):
-        opt.zero_grad(set_to_none=True)
-        uf, mf = acts(updated, forget, step)
-        unlearn = mse(uf * mf, cv.expand_as(uf) * mf)
-        ur, mr = acts(updated, retain, step)
-        with torch.no_grad():
-            fr, _ = acts(frozen, retain, step)
-        retain_loss = mse(ur * mr, fr.to(ur.dtype) * mr) * args.alpha
-        loss = unlearn + retain_loss
-        loss.backward()
-        opt.step()
-        if step % 25 == 0 or step == args.steps - 1:
-            print(f"  step {step}: unlearn={unlearn.item():.4f} retain={retain_loss.item():.4f}", flush=True)
-
+    run_rmu(updated, frozen, tok, forget, retain, layer=args.layer, update_layers=args.update_layers,
+            coeff=args.coeff, alpha=args.alpha, steps=args.steps, lr=args.lr,
+            batch_size=args.batch_size, max_tokens=args.max_tokens)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     updated.save_pretrained(out)
     tok.save_pretrained(out)
     print(f"saved unlearned model -> {out}", flush=True)
     return 0
+
+
+def run_rmu(updated, frozen, tok, forget, retain, *, layer, update_layers, coeff,
+            alpha, steps, lr, batch_size, max_tokens) -> None:
+    """In-place RMU on `updated` (frozen = reference). No disk I/O — used by main() and the
+    in-memory point runner (run_point.py) so no 16GB checkpoint is ever written."""
+    import torch
+
+    n_layers = updated.config.num_hidden_layers
+    if not (0 <= layer < n_layers):
+        raise ValueError(f"layer {layer} out of range 0..{n_layers - 1}")
+    update_ids = list(range(max(0, layer - update_layers + 1), layer + 1))
+    params = []
+    for i in update_ids:
+        w = updated.model.layers[i].mlp.down_proj.weight
+        w.requires_grad_(True)
+        params.append(w)
+    opt = torch.optim.AdamW(params, lr=lr)
+    device = next(updated.parameters()).device
+    cv = torch.rand(1, 1, updated.config.hidden_size, device=device, dtype=torch.bfloat16)
+    cv = cv / cv.norm() * coeff
+
+    def acts(model, texts, idx):
+        batch = texts[idx % len(texts): idx % len(texts) + batch_size] or texts[:batch_size]
+        enc = tok(batch, return_tensors="pt", padding=True, truncation=True,
+                  max_length=max_tokens).to(device)
+        out = model(**enc, output_hidden_states=True)
+        return out.hidden_states[layer + 1], enc["attention_mask"].unsqueeze(-1)
+
+    mse = torch.nn.MSELoss()
+    for step in range(steps):
+        opt.zero_grad(set_to_none=True)
+        uf, mf = acts(updated, forget, step)
+        unlearn = mse(uf * mf, cv.expand_as(uf) * mf)
+        ur, mr = acts(updated, retain, step)
+        with torch.no_grad():
+            fr, _ = acts(frozen, retain, step)
+        retain_loss = mse(ur * mr, fr.to(ur.dtype) * mr) * alpha
+        (unlearn + retain_loss).backward()
+        opt.step()
+        if step % 25 == 0 or step == steps - 1:
+            print(f"  step {step}: unlearn={unlearn.item():.4f} retain={retain_loss.item():.4f}", flush=True)
 
 
 if __name__ == "__main__":

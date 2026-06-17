@@ -159,10 +159,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", required=True)
     args = p.parse_args(argv)
 
+    model, tok = _load(args.model)
+    run_evals(model, tok, args)
+    return 0
+
+
+def run_evals(model, tok, args) -> dict:
+    """Run all eval axes on an in-memory model; write <out>.json (+ .saq_answers.parquet).
+    Used by main() and the in-memory point runner (run_point.py) so no checkpoint is needed."""
     import polars as pl
     from datasets import load_dataset
 
-    model, tok = _load(args.model)
     result: dict = {"tag": args.tag, "model": args.model, "seed": args.seed, "scores": {},
                     "degeneracy": {}, "samples": {}, "errors": {}}
 
@@ -227,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     Path(args.out).write_text(json.dumps(result, indent=2))
     print(f"wrote {args.out}", flush=True)
     print(json.dumps(result["scores"], indent=2), flush=True)
-    return 0
+    return result
 
 
 if __name__ == "__main__":
