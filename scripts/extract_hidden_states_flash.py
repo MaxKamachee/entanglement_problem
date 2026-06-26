@@ -71,16 +71,17 @@ INPUT_TEXT_CAP = 12000                # ~chars; 2048 tokens of English is well u
 # --------------------------------------------------------------------------------------------
 # Local helpers (no GPU) — sampling + payload (de)serialization. Importable for offline tests.
 # --------------------------------------------------------------------------------------------
-def stratified_sample(units, n_per_corpus: int, seed: int):
+def stratified_sample(units, n_per_corpus: int, seed: int, buckets=BUCKETS):
     """Uniform sample of up to ``n_per_corpus`` rows per bucket. Deterministic given the seed.
 
     Identical protocol to the BGE pilot (``separability.balanced_sample``) so the
-    representation-space result is directly comparable.
+    representation-space result is directly comparable. ``buckets`` selects which labels
+    to sample (default offense/dual/defense; pass 'forget retain' for the WMDP runs).
     """
     import polars as pl
 
     parts = []
-    for bucket in BUCKETS:
+    for bucket in buckets:
         b = units.filter(pl.col("bucket") == bucket)
         parts.append(b.sample(n=min(n_per_corpus, b.height), seed=seed) if b.height else b)
     return pl.concat(parts)
@@ -190,6 +191,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--revision", default=None)
     p.add_argument("--layers", type=int, nargs="+", default=DEFAULT_LAYERS)
+    p.add_argument("--buckets", nargs="+", default=list(BUCKETS),
+                   help="bucket labels to sample (default offense dual defense; "
+                        "pass 'forget retain' for the WMDP bio/cyber runs)")
     p.add_argument("--n-per-corpus", type=int, default=200)
     p.add_argument("--max-tokens", type=int, default=MAX_TOKENS)
     p.add_argument("--seed", type=int, default=0)
@@ -212,7 +216,7 @@ async def run_extraction(args) -> None:
               flush=True)
 
     units = pl.read_parquet(corpus)
-    sample = stratified_sample(units, args.n_per_corpus, args.seed)
+    sample = stratified_sample(units, args.n_per_corpus, args.seed, buckets=args.buckets)
     counts = dict(sample.group_by("bucket").len().iter_rows())
     print(f"sampled {sample.height} docs {counts} (seed={args.seed}); "
           f"extracting layers {args.layers} on RunPod A100...", flush=True)
