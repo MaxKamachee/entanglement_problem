@@ -5,6 +5,15 @@
 #     bash scripts/pod_setup.sh
 set -euo pipefail
 
+echo ">> disk check (need ~25-27 GB free for deps + zephyr weights + dataset cache)"
+df -h "${HF_HOME:-$HOME}" . | sed 's/^/   /'
+FREE_GB=$(df -Pk "${HF_HOME:-$HOME}" | awk 'NR==2{print int($4/1024/1024)}')
+echo ">> free on cache target: ${FREE_GB} GB  (HF_HOME=${HF_HOME:-<default ~/.cache/huggingface>})"
+if [ "${FREE_GB}" -lt 30 ]; then
+  echo "!! WARNING: <30 GB free. Set HF_HOME to a roomy volume, e.g.:  export HF_HOME=/workspace/hf"
+  echo "!! (continuing in 5s — Ctrl-C to abort)"; sleep 5
+fi
+
 echo ">> installing deps"
 pip install -q "torch" "transformers>=4.43" datasets polars accelerate peft huggingface_hub numpy
 

@@ -3,11 +3,21 @@
 A persistent pod loads the model/datasets **once** — far cheaper than Flash serverless, which
 cold-started (image pull + dep install + model download) on *every* point.
 
-## 0. Pod
+## 0. Pod  (mind the DISK — this bit us before)
 
 - GPU: **A6000 / A40 (48 GB)** is enough and cheap — RMU loads model + frozen copy (~28 GB bf16);
   relearn is LoRA. A100 80 GB also fine. ~$0.5–0.8/hr (A6000).
-- Template: any PyTorch image. Container disk ≥ 40 GB (model ~16 GB + datasets).
+- **Disk budget ~25–27 GB**: deps ~7 GB + zephyr weights ~14 GB + dataset cache ~3–4 GB + parquets.
+  A default 20 GB **container disk overflows** — provision one of:
+  - **container disk ≥ 50 GB**, or
+  - a **persistent/network volume** (usually mounted at `/workspace`) and point caches there:
+    ```bash
+    export HF_HOME=/workspace/hf            # model + dataset cache on the roomy volume
+    ```
+    Put that line in `~/.bashrc` so every shell (and `pod_setup.sh`) uses it.
+- We **never write model checkpoints** (RMU/relearn run in-memory) — so disk stays flat during runs;
+  the only big consumers are the one-time weight + dataset downloads above.
+- `df -h` before you start; `pod_setup.sh` prints free space and warns if it's tight.
 
 ## 1. Get the code + auth
 
@@ -15,6 +25,9 @@ cold-started (image pull + dep install + model download) on *every* point.
 # clone the private repo (use your GitHub PAT or gh auth)
 git clone https://github.com/MaxKamachee/entanglement_problem.git
 cd entanglement_problem
+
+# put caches on the roomy volume FIRST (skip only if container disk ≥ 50 GB)
+export HF_HOME=/workspace/hf && echo 'export HF_HOME=/workspace/hf' >> ~/.bashrc
 
 # HF auth — REQUIRED: zephyr + wmdp/mmlu are public, but the bio FORGET corpus is gated
 hf auth login            # paste a token from https://huggingface.co/settings/tokens
