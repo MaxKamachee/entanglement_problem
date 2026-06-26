@@ -124,25 +124,32 @@ def main() -> None:
     L.append("")
 
     L.append("## Headline")
+    L.append("**Durability, not absolute recovery, is the entanglement metric** — absolute "
+             "offense-recovered is confounded by how much offense each domain started with (bio's "
+             "base is higher). The right question is whether the unlearning *stuck*: fraction of "
+             "base offense recovered (→1.0 = fully reverses) and offense remaining below base.")
+    L.append("")
 
     def cmp(corpus, label):
         bio, cyb = summ.get(f"bio_rel{corpus}"), summ.get(f"cyber_rel{corpus}")
-        if not (bio and cyb):
+        if not (bio and cyb) or bio["frac"] is None or cyb["frac"] is None:
             return
-        more = "cyber" if cyb["rec"] > bio["rec"] else "bio"
-        L.append(f"- **{label}:** offense recovered — bio {fmt(bio['rec'])}, cyber {fmt(cyb['rec'])} "
-                 f"→ recovers more in **{more}**"
-                 + (f" (frac→base: bio {fmt(bio['frac'])}, cyber {fmt(cyb['frac'])})"
-                    if bio['frac'] is not None and cyb['frac'] is not None else "") + ".")
+        more = "cyber" if cyb["frac"] > bio["frac"] else "bio"
+        L.append(f"- **{label}:** fraction of base recovered — bio {fmt(bio['frac'])}, cyber "
+                 f"{fmt(cyb['frac'])} → recovers more {'completely' if more=='cyber' else 'fully'} in "
+                 f"**{more}** (absolute, for reference: bio {fmt(bio['rec'])}, cyber {fmt(cyb['rec'])}).")
 
     cmp("retain", "Entanglement probe (retain-only FT)")
     cmp("forget", "Adversarial recovery (forget FT)")
     if all(f"{d}_relretain" in summ for d in ("bio", "cyber")):
-        br, cr = summ["bio_relretain"]["rec"], summ["cyber_relretain"]["rec"]
-        L.append(f"- **Interpretation:** offense reviving from legitimate same-domain text alone "
-                 f"means entanglement; cyber {fmt(cr)} vs bio {fmt(br)} "
-                 f"→ {'supports' if cr > br else 'does NOT support'} cyber being more entangled "
-                 "(consistent with the unlearning-tax result).")
+        bf, cf = summ["bio_relretain"]["frac"], summ["cyber_relretain"]["frac"]
+        if bf is not None and cf is not None:
+            L.append(f"- **Interpretation:** offense reviving from legitimate same-domain text alone "
+                     f"is the entanglement signal. Cyber recovers {fmt(cf)} of base from retain-only "
+                     f"FT vs bio {fmt(bf)} → {'SUPPORTS' if cf > bf else 'does NOT support'} cyber "
+                     "being more entangled (consistent with the unlearning-tax result + WMDP Fig 15). "
+                     "Caveat: cyber's base offense is near chance, so its small headroom makes the "
+                     "fraction noisier (can exceed 1.0).")
 
     fig = make_figure(data)
     if fig:
