@@ -71,7 +71,8 @@ Each `runs/relearn/<cond>.json` has a `series` of {relearn_steps, offense_mcq, n
 runpodctl send runs/relearn/*.json      # on the pod
 runpodctl receive <code>                # on your laptop, into runs/relearn/
 ```
-Then locally: the analysis/plots (`diag_entanglement_tax.py`, and the relearn plotter once written).
+Then locally (no GPU): `python scripts/diag_relearn.py` → `reports/relearn_recovery.md` (+ figure);
+`python scripts/diag_entanglement_tax.py` for the sweep.
 
 ## 5. STOP THE POD
 
