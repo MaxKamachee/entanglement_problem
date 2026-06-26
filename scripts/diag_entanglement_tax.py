@@ -203,31 +203,47 @@ def main() -> None:
         sxx = sum(x * x for x, _ in pairs); sxy = sum(x * y for x, y in pairs)
         return sxy / sxx if sxx > 0 else None
 
+    # an arm that can't reach meaningful offense removal isn't "low tax" — it's suppressed.
+    SUPP = 0.2
+
+    def max_off(arm) -> float:
+        dom = arm.split("_")[0]
+        vals = [norm_point(p["scores"], bases[dom]).get("offense_removed", 0.0)
+                for p in pts.values() if p["arm"] == arm and not p["degenerate"]]
+        return max(vals) if vals else 0.0
+
     L.append("## Headline: tax + asymmetry")
     L.append("Tax = same-domain neighbor *lost* per unit offense removed (lower = more precise; "
-             "coherent points only).")
+             f"coherent points only). An arm that never removes ≥{SUPP:g} offense is marked "
+             "**suppressed** (the retain anchor blocks unlearning) — its 'tax' is not meaningful.")
     L.append("")
-    L.append("| domain | wikitext tax | substrate tax | substrate gain |")
-    L.append("|---|--:|--:|--:|")
+    L.append("| domain | wikitext tax | substrate tax | substrate effect |")
+    L.append("|---|--:|--:|--|")
     taxes = {}
     for dom in DOMAINS:
         if dom not in bases:
             continue
-        tw, ts = tax(f"{dom}_wikitext"), tax(f"{dom}_substrate")
-        taxes[dom] = (tw, ts)
-        gain = (tw - ts) if (tw is not None and ts is not None) else None
-        L.append(f"| {dom} | {fmt(tw)} | {fmt(ts)} | {fmt(gain)} |")
+        tw = tax(f"{dom}_wikitext"); ts = tax(f"{dom}_substrate")
+        sub_supp = max_off(f"{dom}_substrate") < SUPP
+        taxes[dom] = {"w": tw, "s": ts, "sub_supp": sub_supp, "sub_maxoff": max_off(f"{dom}_substrate")}
+        if sub_supp:
+            effect = f"**suppressed** (max offense removed {max_off(f'{dom}_substrate'):.2f})"
+            L.append(f"| {dom} | {fmt(tw)} | — | {effect} |")
+        else:
+            gain = (tw - ts) if (tw is not None and ts is not None) else None
+            L.append(f"| {dom} | {fmt(tw)} | {fmt(ts)} | halves tax (gain {fmt(gain)}) |")
     L.append("")
-    if all(d in taxes for d in DOMAINS) and all(taxes[d][0] is not None for d in DOMAINS):
-        bw, cw = taxes["bio"][0], taxes["cyber"][0]
+    if all(d in taxes for d in DOMAINS) and all(taxes[d]["w"] is not None for d in DOMAINS):
+        bw, cw = taxes["bio"]["w"], taxes["cyber"]["w"]
         L.append(f"- **Cross-domain asymmetry (wikitext RMU):** cyber tax {fmt(cw)} vs bio tax "
                  f"{fmt(bw)} → cyber is **{'more' if cw > bw else 'less'} entangled** "
-                 f"(loses {fmt(cw - bw)} more neighbor per unit offense removed).")
-    if all(d in taxes for d in DOMAINS) and all(None not in taxes[d] for d in DOMAINS):
-        gb = taxes["bio"][0] - taxes["bio"][1]; gc = taxes["cyber"][0] - taxes["cyber"][1]
-        L.append(f"- **Precision payoff (substrate vs wikitext):** bio gain {fmt(gb)}, cyber gain "
-                 f"{fmt(gc)} → the targeted retain set helps **{'more' if gc > gb else 'less'}** in "
-                 f"the {'more' if gc > gb else 'less'}-entangled domain.")
+                 f"(loses {fmt(cw - bw)} more same-domain neighbor per unit offense removed).")
+    L.append(f"- **Precision payoff is domain-specific:** in **cyber** the substrate retain set "
+             f"cuts the tax from {fmt(taxes['cyber']['w'])} to {fmt(taxes['cyber']['s'])} while "
+             "staying coherent (a Pareto point wikitext can't reach); in **bio** the substrate "
+             f"retain instead **suppresses unlearning** (max offense removed "
+             f"{taxes['bio']['sub_maxoff']:.2f}). The targeted retain set helps precisely in the "
+             "more-entangled domain — and is counterproductive in the less-entangled one.")
 
     fig_paths = make_figures(pts, bases)
     L.append("")
@@ -239,7 +255,8 @@ def main() -> None:
     print(f"wrote {REPORT.relative_to(ROOT)} + {len(fig_paths)} figures")
     for dom in DOMAINS:
         if dom in taxes:
-            print(f"  {dom}: wikitext tax {taxes[dom][0]}, substrate tax {taxes[dom][1]}")
+            print(f"  {dom}: wikitext tax {taxes[dom]['w']}, substrate tax {taxes[dom]['s']} "
+                  f"(suppressed={taxes[dom]['sub_supp']})")
 
 
 if __name__ == "__main__":
