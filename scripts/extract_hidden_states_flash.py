@@ -111,12 +111,15 @@ def decode_embeddings(emb_npy_b64: str):
 # Remote GPU function — runs on a RunPod A100. ALL heavy imports inside (cloudpickle).
 # --------------------------------------------------------------------------------------------
 @Endpoint(
-    name="extract-hidden-states",
+    name="extract-hidden-states-v2",              # fresh name -> clean worker + current code
     gpu=GpuGroup.AMPERE_80,                       # A100 80GB
     workers=(1, 1),                               # one warm worker for this one-shot job
-    idle_timeout=600,                             # keep warm across the 3 per-layer calls
+    idle_timeout=180,                             # keep warm across the 3 per-layer calls
     dependencies=["torch", "transformers>=4.43", "polars", "pyarrow"],
-    env={"HF_TOKEN": os.environ.get("HF_TOKEN", "")},   # forwarded from local env
+    env={"HF_TOKEN": os.environ.get("HF_TOKEN", ""),    # forwarded from local env
+         # avoid allocator fragmentation across the per-layer / cross-corpus calls on a
+         # warm worker (a full bf16 batch can't grow into freed-but-fragmented blocks).
+         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"},
     execution_timeout_ms=0,                       # unlimited: gated ~16 GB load + inference
 )
 async def extract_layer(sample_parquet_b64: str, layer: int, model_name: str,
@@ -151,20 +154,23 @@ async def extract_layer(sample_parquet_b64: str, layer: int, model_name: str,
     doc_ids = sample["doc_id"].to_list()
     texts = sample["text"].to_list()
 
+    torch.cuda.empty_cache()                                  # start from a clean allocator
     vecs: list[np.ndarray] = []
     total_tokens = 0
-    batch_size = 8
+    batch_size = 4
     for start in range(0, len(texts), batch_size):
         enc = tokenizer(texts[start:start + batch_size], return_tensors="pt",
                         padding=True, truncation=True, max_length=max_tokens).to("cuda")
         mask = enc["attention_mask"]
         total_tokens += int(mask.sum().item())
         with torch.no_grad():
-            out = model(**enc)
+            out = model(**enc, use_cache=False)               # no KV cache: we only forward once
         h = out.hidden_states[layer].to(torch.float32)        # (B, T, H)
         m = mask.unsqueeze(-1).to(torch.float32)
         pooled = (h * m).sum(dim=1) / m.sum(dim=1).clamp(min=1.0)   # masked mean -> (B, H)
         vecs.append(pooled.cpu().numpy().astype(np.float16))
+        del enc, mask, out, h, m, pooled                      # release per-batch GPU tensors
+    torch.cuda.empty_cache()
 
     emb = np.concatenate(vecs, axis=0)                         # (n_docs, 4096) float16
     buf = _io.BytesIO()

@@ -86,19 +86,21 @@ def ladder(h: pl.DataFrame) -> dict[int, list[tuple[float, float]]]:
     return out
 
 
-def centroid_cosdist(h: pl.DataFrame, layer: int) -> tuple[float, float]:
-    """Cosine distance between forget/retain centroids, raw and after mean-centering."""
+def centroid_cosdist(h: pl.DataFrame, layer: int) -> float:
+    """Raw cosine distance between forget/retain centroids.
+
+    Only the *uncentered* version is meaningful: for balanced 2-class data, subtracting
+    the global mean forces the two class centroids antiparallel (cos = -1, distance 2.0),
+    so any centered/PC-removed centroid distance is a degenerate constant. The PC-removal
+    probe (above) is the confound-controlled measure; this is a coarse raw-space sanity check.
+    """
     s = h.filter((pl.col("layer") == layer) & pl.col("corpus_label").is_in(LABELS))
     X = np.array(s["embedding"].to_list())
     y = s["corpus_label"].to_numpy()
-
-    def cd(M: np.ndarray) -> float:
-        f = M[y == "forget"].mean(0)
-        r = M[y == "retain"].mean(0)
-        cos = f @ r / (np.linalg.norm(f) * np.linalg.norm(r) + 1e-12)
-        return float(1 - cos)
-
-    return cd(X), cd(X - X.mean(0))
+    f = X[y == "forget"].mean(0)
+    r = X[y == "retain"].mean(0)
+    cos = f @ r / (np.linalg.norm(f) * np.linalg.norm(r) + 1e-12)
+    return float(1 - cos)
 
 
 def fmt_row(layer: int, cells: list[tuple[float, float]]) -> str:
@@ -196,12 +198,11 @@ def main() -> None:
         for layer in LAYERS:
             L.append(fmt_row(layer, lads[dom][layer]))
     L.append("")
-    L.append("## Forget/retain centroid cosine distance (raw / mean-centered)")
+    L.append("## Forget/retain centroid cosine distance (raw space; coarse sanity check)")
     L.append("| layer | bio | cyber |")
     L.append("|---:|:---:|:---:|")
     for layer in LAYERS:
-        b = cdist["bio"][layer]; c = cdist["cyber"][layer]
-        L.append(f"| {layer} | {b[0]:.3f} / {b[1]:.3f} | {c[0]:.3f} / {c[1]:.3f} |")
+        L.append(f"| {layer} | {cdist['bio'][layer]:.3f} | {cdist['cyber'][layer]:.3f} |")
 
     # data-driven interpretation
     def survival(lad, layer, k):  # accuracy after dropping k PCs
@@ -221,9 +222,25 @@ def main() -> None:
                  "**cyber is more separable than bio**" if delta < -0.05 else
                  "**no clear asymmetry** between domains")
     L.append(f"- **Asymmetry (headline).** Mean drop-3 accuracy across layers: bio {bio_d3:.3f} vs "
-             f"cyber {cyb_d3:.3f} (Δ = {delta:+.3f}). Under confound-controlled PC removal, {direction}. "
-             "This is the WMDP App D claim, now with a number — but it remains a *geometric* measure; "
-             "confirm with the unlearning-tax experiment before claiming causal entanglement.")
+             f"cyber {cyb_d3:.3f} (Δ = {delta:+.3f}). Under confound-controlled PC removal, {direction} "
+             "— the OPPOSITE direction to the WMDP App D intuition (which expects bio more separable).")
+    # the decisive nuance: where does the gap live?
+    bio_l28, cyb_l28 = survival(lads["bio"], 28, 3), survival(lads["cyber"], 28, 3)
+    bio_shallow = np.mean([survival(lads["bio"], layer, 3) for layer in (4, 16)])
+    cyb_shallow = np.mean([survival(lads["cyber"], layer, 3) for layer in (4, 16)])
+    L.append(f"- **The gap is shallow-layer-only.** At L28 — the layer RMU acts on — BOTH collapse to "
+             f"~chance (bio {bio_l28:.3f}, cyber {cyb_l28:.3f}); no asymmetry there. The cross-layer "
+             f"gap is driven entirely by the shallow/mid layers (drop-3: bio {bio_shallow:.3f} vs cyber "
+             f"{cyb_shallow:.3f} at L4/L16), which `reports/pca_confound_check.md` flags as the "
+             "confound-prone (topic/register/format) regime. Plausible confound: bio forget+retain are "
+             "BOTH PubMed papers (same register, hard to separate), while cyber forget (offensive "
+             "procedures) vs retain (CS-textbook prose) differ in register — a corpus-construction "
+             "artifact, not knowledge entanglement.")
+    L.append("- **Verdict.** Embedding geometry does not support the hypothesized bio>cyber separability "
+             "asymmetry; at the RMU-relevant layer there is no asymmetry at all. This is the third "
+             "geometric instrument to come back confound-bound (cf. `pca_confound_check.md`, "
+             "`wmdp_cyber_geometry_baseline.md`). The capability-entanglement question must be answered "
+             "by the causal unlearning-tax + relearning experiment, not by representation geometry.")
 
     fig_paths = make_figures(lads, hs)
     L.append("")
