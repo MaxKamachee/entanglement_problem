@@ -47,8 +47,11 @@ def parse_args(argv=None):
     p.add_argument("--max-tokens", type=int, default=512)
     p.add_argument("--seed", type=int, default=0)
     # eval params (consumed by eval_suite.run_evals)
+    p.add_argument("--domain", default="cyber",
+                   help="eval domain: selects offense WMDP subject + MMLU neighbor subjects")
     p.add_argument("--saq", default="data/saq_eval.parquet")
     p.add_argument("--n-mcq", type=int, default=200)
+    p.add_argument("--n-neighbor", type=int, default=100)
     p.add_argument("--n-mmlu", type=int, default=200)
     p.add_argument("--n-mbpp", type=int, default=50)
     p.add_argument("--n-saq", type=int, default=0)
