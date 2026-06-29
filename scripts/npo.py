@@ -19,15 +19,16 @@ from __future__ import annotations
 
 
 def _seq_logprob(model, enc):
-    """Mean per-token logprob (teacher-forced), (B,). Memory-efficient: no full-vocab float32
-    softmax — gather the label logit and subtract logsumexp (a reduction)."""
+    """SUMMED sequence log-likelihood (teacher-forced), (B,) — the canonical NPO/DPO quantity
+    (not length-normalized). Memory-efficient: no full-vocab float32 softmax — gather the label
+    logit and subtract logsumexp (a reduction)."""
     import torch
     logits = model(**enc).logits[:, :-1, :]
     labels = enc["input_ids"][:, 1:]
-    sel = logits.gather(-1, labels.unsqueeze(-1)).squeeze(-1)   # (B,T)
-    lse = torch.logsumexp(logits, dim=-1)                       # (B,T) reduction, no (B,T,V) copy
-    mask = enc["attention_mask"][:, 1:].to(logits.dtype)
-    return ((sel - lse) * mask).sum(-1) / mask.sum(-1).clamp(min=1.0)
+    sel = logits.gather(-1, labels.unsqueeze(-1)).squeeze(-1)   # (B,T) bf16
+    lse = torch.logsumexp(logits, dim=-1)                       # (B,T) reduction in bf16 (no (B,T,V) copy)
+    mask = enc["attention_mask"][:, 1:].float()
+    return ((sel - lse).float() * mask).sum(-1)                 # summed (canonical); cast small (B,T) only
 
 
 def run_npo(model, tok, forget, retain, *, steps, lr, beta, retain_weight, batch_size, max_tokens):
