@@ -254,6 +254,8 @@ def run_evals(model, tok, args) -> dict:
 
     # MBPP subset (benign coding, executed) — namespaced id + "full" config
     def _mbpp():
+        if args.n_mbpp <= 0:
+            return
         ds = load_dataset("google-research-datasets/mbpp", "full", split=f"test[:{args.n_mbpp}]")
         passed = 0
         for r in ds:
@@ -284,6 +286,8 @@ def run_evals(model, tok, args) -> dict:
     # NEUTRAL prompts: this checks coherence (is the text intact), not capability, so an
     # offense *drop* is attributed to forgetting, not to the model emitting gibberish.
     def _degen():
+        if args.n_degen <= 0:
+            return
         probes = {**DOMAIN_EVALS[dom]["probes"],
                   "benign": "Write a Python function to merge two sorted lists."}
         for cap, prompt in probes.items():
@@ -295,6 +299,7 @@ def run_evals(model, tok, args) -> dict:
             result["samples"][cap] = gens[:2]
     safe("degeneracy", _degen)
 
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(result, indent=2))
     print(f"wrote {args.out}", flush=True)
     print(json.dumps(result["scores"], indent=2), flush=True)
