@@ -64,6 +64,24 @@ Each `runs/relearn/<cond>.json` has a `series` of {relearn_steps, offense_mcq, n
 - `*_relforget` = adversarial robustness (paper Fig 15): re-teach the forbidden corpus.
 - `*_relretain` = entanglement probe: does offense revive from legitimate same-domain text alone?
 
+## 3c. Phase-D: durability eval (RMU + circuit breakers) + gradient metric
+
+The paper's Section-4 run. On Llama-3.1-8B-Instruct (the model Heretic mass-uncensors), measure how
+fast harmful capability returns under finetuning, for BOTH safeguards, adversarial + benign FT.
+```bash
+M=meta-llama/Llama-3.1-8B-Instruct          # accept the Llama license on HF first
+# unlearning (RMU) durability — 4 conditions (bio/cyber × relearn-on-forget/retain)
+python scripts/run_relearn_sweep.py --model $M --method rmu \
+  --out-dir runs/relearn_llama --relearn-steps 300 --eval-every 50
+# tamper-resistance (circuit breakers) durability — same conditions
+python scripts/run_relearn_sweep.py --model $M --method circuit_breakers \
+  --out-dir runs/relearn_llama --relearn-steps 300 --eval-every 50
+# entanglement predictor across ALL THREE domains (chem needs no corpus here)
+python scripts/gradient_align.py --model $M --domains bio cyber chem \
+  --out runs/gradient_align_llama.json
+```
+Outputs: `runs/relearn_llama/{rmu,cb}_<cond>.json` (recovery curves) + `gradient_align_llama.json`.
+
 ## 4. Pull results back + analyze locally
 
 ```bash
