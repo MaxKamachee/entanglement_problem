@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import circuit_breakers  # noqa: E402
 import eval_suite  # noqa: E402
 import relearn  # noqa: E402
 import unlearn_rmu  # noqa: E402
@@ -34,17 +35,25 @@ def parse_args(argv=None):
     p.add_argument("--model", default="HuggingFaceH4/zephyr-7b-beta")
     p.add_argument("--domain", required=True, choices=sorted(eval_suite.DOMAIN_EVALS))
     p.add_argument("--out", required=True)
-    # unlearn (RMU)
-    p.add_argument("--coeff", type=float, required=True)
+    p.add_argument("--method", choices=["rmu", "circuit_breakers"], default="rmu",
+                   help="unlearning method whose durability we test")
+    # corpora (shared)
     p.add_argument("--forget-parquet", required=True)
     p.add_argument("--forget-buckets", nargs="+", required=True)
     p.add_argument("--retain-parquet", required=True)
     p.add_argument("--retain-buckets", nargs="+", required=True)
+    # RMU params
+    p.add_argument("--coeff", type=float, default=6.5)
     p.add_argument("--layer", type=int, default=7)
     p.add_argument("--update-layers", type=int, default=3)
     p.add_argument("--alpha", type=float, default=1200.0)
     p.add_argument("--steps", type=int, default=500)
     p.add_argument("--lr", type=float, default=5e-5)
+    # circuit-breaker params
+    p.add_argument("--cb-target-layers", type=int, nargs="+", default=[10, 20])
+    p.add_argument("--cb-alpha", type=float, default=10.0)
+    p.add_argument("--cb-steps", type=int, default=300)
+    p.add_argument("--cb-lr", type=float, default=1e-4)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--max-tokens", type=int, default=512)
     # relearn (LoRA finetune)
@@ -93,17 +102,24 @@ def main(argv=None) -> int:
         m.train(trainable); m.requires_grad_(False)
         return m
 
-    # 1) RMU unlearn
-    model = load(True)
-    frozen = load(False)
+    # 1) unlearn with the chosen method
     forget = unlearn_rmu.load_texts(args.forget_parquet, args.forget_buckets)
     retain = unlearn_rmu.load_texts(args.retain_parquet, args.retain_buckets)
-    print(f"RMU {args.domain} coeff={args.coeff}: forget={len(forget)} retain={len(retain)}", flush=True)
-    unlearn_rmu.run_rmu(model, frozen, tok, forget, retain, layer=args.layer,
-                        update_layers=args.update_layers, coeff=args.coeff, alpha=args.alpha,
-                        steps=args.steps, lr=args.lr, batch_size=args.batch_size,
-                        max_tokens=args.max_tokens)
-    del frozen
+    print(f"{args.method} {args.domain}: forget={len(forget)} retain={len(retain)}", flush=True)
+    if args.method == "rmu":
+        model = load(True)
+        frozen = load(False)
+        unlearn_rmu.run_rmu(model, frozen, tok, forget, retain, layer=args.layer,
+                            update_layers=args.update_layers, coeff=args.coeff, alpha=args.alpha,
+                            steps=args.steps, lr=args.lr, batch_size=args.batch_size,
+                            max_tokens=args.max_tokens)
+        del frozen
+    else:  # circuit_breakers — LoRA RR training merged into weights
+        model = load(False)
+        model = circuit_breakers.run_cb(model, tok, forget, retain,
+                                        target_layers=args.cb_target_layers, steps=args.cb_steps,
+                                        lr=args.cb_lr, alpha=args.cb_alpha,
+                                        batch_size=args.batch_size, max_tokens=args.max_tokens)
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     model.eval()
@@ -124,7 +140,7 @@ def main(argv=None) -> int:
         series.append({"relearn_steps": done, **quick_eval(model, tok, args.domain, args.n_mcq, args.n_neighbor)})
         print(f"after {done} relearn steps: {series[-1]}", flush=True)
 
-    out = {"model": args.model, "domain": args.domain, "coeff": args.coeff,
+    out = {"model": args.model, "domain": args.domain, "method": args.method, "coeff": args.coeff,
            "relearn_parquet": args.relearn_parquet, "relearn_buckets": args.relearn_buckets,
            "relearn_steps": args.relearn_steps, "series": series}
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

@@ -39,6 +39,7 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model", default="HuggingFaceH4/zephyr-7b-beta")
     p.add_argument("--conditions", nargs="+", default=list(CONDITIONS), choices=list(CONDITIONS))
+    p.add_argument("--method", choices=["rmu", "circuit_breakers"], default="rmu")
     p.add_argument("--coeff", type=float, default=6.5)
     p.add_argument("--relearn-steps", type=int, default=200)
     p.add_argument("--eval-every", type=int, default=50)
@@ -51,15 +52,16 @@ def main(argv=None) -> int:
     import shlex
     extra = shlex.split(args.extra)
 
+    mtag = "rmu" if args.method == "rmu" else "cb"
     for name in args.conditions:
         c = CONDITIONS[name]
         dom = c["domain"]
-        eval_json = out / f"{name}.json"
+        eval_json = out / f"{mtag}_{name}.json"
         if eval_json.exists():
-            print(f"skip {name} (already done)", flush=True)
+            print(f"skip {mtag}_{name} (already done)", flush=True)
             continue
         cmd = [sys.executable, str(SCRIPTS / "run_relearn.py"),
-               "--model", args.model, "--domain", dom, "--coeff", str(args.coeff),
+               "--model", args.model, "--domain", dom, "--method", args.method, "--coeff", str(args.coeff),
                "--forget-parquet", FORGET[dom], "--forget-buckets", "forget",
                "--retain-parquet", "data/wikitext_units.parquet", "--retain-buckets", "retain",
                "--relearn-parquet", c["relearn_parquet"], "--relearn-buckets", *c["relearn_buckets"],
