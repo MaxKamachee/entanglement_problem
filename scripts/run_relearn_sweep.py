@@ -48,7 +48,8 @@ def main(argv=None) -> int:
     p.add_argument("--model", default="HuggingFaceH4/zephyr-7b-beta")
     p.add_argument("--conditions", nargs="+", default=list(CONDITIONS), choices=list(CONDITIONS))
     p.add_argument("--method", choices=["rmu", "circuit_breakers"], default="rmu")
-    p.add_argument("--coeff", type=float, default=6.5)
+    p.add_argument("--coeff", type=float, default=6.5, help="RMU unlearning strength")
+    p.add_argument("--cb-alpha", type=float, default=10.0, help="CB unlearning strength")
     p.add_argument("--relearn-steps", type=int, default=200)
     p.add_argument("--eval-every", type=int, default=50)
     p.add_argument("--out-dir", required=True)
@@ -68,8 +69,10 @@ def main(argv=None) -> int:
         if eval_json.exists():
             print(f"skip {mtag}_{name} (already done)", flush=True)
             continue
+        strength = (["--coeff", str(args.coeff)] if args.method == "rmu"
+                    else ["--cb-alpha", str(args.cb_alpha)])
         cmd = [sys.executable, str(SCRIPTS / "run_relearn.py"),
-               "--model", args.model, "--domain", dom, "--method", args.method, "--coeff", str(args.coeff),
+               "--model", args.model, "--domain", dom, "--method", args.method, *strength,
                "--forget-parquet", FORGET[dom], "--forget-buckets", "forget",
                "--retain-parquet", "data/wikitext_units.parquet", "--retain-buckets", "retain",
                "--relearn-parquet", c["relearn_parquet"], "--relearn-buckets", *c["relearn_buckets"],
