@@ -19,22 +19,28 @@ from __future__ import annotations
 
 
 def _seq_logprob(model, enc):
-    """Mean per-token logprob of each sequence (teacher-forced), shape (B,)."""
+    """Mean per-token logprob (teacher-forced), (B,). Memory-efficient: no full-vocab float32
+    softmax — gather the label logit and subtract logsumexp (a reduction)."""
     import torch
-    out = model(**enc)
-    logits = out.logits[:, :-1, :]
+    logits = model(**enc).logits[:, :-1, :]
     labels = enc["input_ids"][:, 1:]
-    logp = torch.log_softmax(logits.float(), dim=-1).gather(-1, labels.unsqueeze(-1)).squeeze(-1)
-    mask = enc["attention_mask"][:, 1:].float()
-    return (logp * mask).sum(-1) / mask.sum(-1).clamp(min=1.0)
+    sel = logits.gather(-1, labels.unsqueeze(-1)).squeeze(-1)   # (B,T)
+    lse = torch.logsumexp(logits, dim=-1)                       # (B,T) reduction, no (B,T,V) copy
+    mask = enc["attention_mask"][:, 1:].to(logits.dtype)
+    return ((sel - lse) * mask).sum(-1) / mask.sum(-1).clamp(min=1.0)
 
 
 def run_npo(model, tok, forget, retain, *, steps, lr, beta, retain_weight, batch_size, max_tokens):
-    """LoRA NPO unlearning, then merge into weights. Returns the merged model."""
+    """LoRA NPO unlearning, then merge into weights. Returns the merged model.
+
+    Memory-managed for 128k-vocab models on ~40GB GPUs: efficient logprob, capped batch/seqlen,
+    and SEPARATE backward on the forget vs retain terms so only one forward graph is alive at a time."""
     import torch
     import torch.nn.functional as F
     from peft import LoraConfig, get_peft_model
 
+    bs = min(2, batch_size)            # NPO holds a full-vocab forward graph -> keep batch small
+    mt = min(256, max_tokens)
     cfg = LoraConfig(
         r=16, lora_alpha=32, lora_dropout=0.0, task_type="CAUSAL_LM",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
@@ -43,26 +49,27 @@ def run_npo(model, tok, forget, retain, *, steps, lr, beta, retain_weight, batch
     model.train()
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
     device = next(model.parameters()).device
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     def enc_of(texts, idx):
-        batch = texts[idx % len(texts): idx % len(texts) + batch_size] or texts[:batch_size]
+        batch = texts[idx % len(texts): idx % len(texts) + bs] or texts[:bs]
         return tok(batch, return_tensors="pt", padding=True, truncation=True,
-                   max_length=max_tokens).to(device)
+                   max_length=mt).to(device)
 
     for step in range(steps):
         opt.zero_grad(set_to_none=True)
-        # NPO forget loss
+        # --- forget term: backward immediately so its graph is freed before the retain forward ---
         ef = enc_of(forget, step)
         lp_theta = _seq_logprob(model, ef)
         with torch.no_grad(), model.disable_adapter():
             lp_ref = _seq_logprob(model, ef)
-        logratio = lp_theta - lp_ref                       # (B,)
-        loss_npo = -(2.0 / beta) * F.logsigmoid(-beta * logratio).mean()
-        # retain cross-entropy (preserve utility)
+        loss_npo = -(2.0 / beta) * F.logsigmoid(-beta * (lp_theta - lp_ref)).mean()
+        loss_npo.backward()
+        # --- retain term (separate graph) ---
         er = enc_of(retain, step)
-        loss_ret = model(**er, labels=er["input_ids"]).loss
-        loss = loss_npo + retain_weight * loss_ret
-        loss.backward()
+        loss_ret = retain_weight * model(**er, labels=er["input_ids"]).loss
+        loss_ret.backward()
         opt.step()
         if step % 25 == 0 or step == steps - 1:
             print(f"  npo step {step}: npo={float(loss_npo.detach()):.4f} "

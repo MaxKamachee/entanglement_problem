@@ -19,8 +19,11 @@ coeff 0 = base model (no RMU). Example:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")  # reduce fragmentation
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import circuit_breakers  # noqa: E402
