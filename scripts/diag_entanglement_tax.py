@@ -33,10 +33,14 @@ MSTYLE = {"rmu": "-", "cb": "--"}
 RCOLOR = {"wikitext": "tab:orange", "substrate": "tab:blue"}
 
 
-def load_points() -> tuple[dict, dict]:
+KEEP_DEGEN = False   # set True for base models where the free-gen degeneracy guard misfires
+
+
+def load_points(dirs=None) -> tuple[dict, dict]:
     """Returns (points, bases). points[tag] = {method,domain,retain,arm,strength,scores,degenerate}."""
     pts, bases = {}, {}
-    for run_dir in sorted(ROOT.glob("runs/entanglement*")):
+    run_dirs = dirs if dirs is not None else sorted(ROOT.glob("runs/entanglement*"))
+    for run_dir in run_dirs:
         for p in sorted(run_dir.glob("*.json")):
             d = json.loads(p.read_text())
             tag = d.get("tag", p.stem)
@@ -83,7 +87,8 @@ def curve(pts, bases, method, arm):
         if p["method"] == method and p["arm"] == arm:
             n = norm_point(p["scores"], bases.get(dom, {}))
             if "offense_removed" in n and "neighbor_kept" in n:
-                rows.append((n["offense_removed"], n["neighbor_kept"], p["strength"], p["degenerate"]))
+                rows.append((n["offense_removed"], n["neighbor_kept"], p["strength"],
+                             p["degenerate"] and not KEEP_DEGEN))
     return sorted(rows, key=lambda r: r[2])
 
 
@@ -181,7 +186,16 @@ def make_figures(pts, bases, methods):
 
 
 def main() -> None:
-    pts, bases = load_points()
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--run-dir", help="single run dir (default: glob runs/entanglement*)")
+    ap.add_argument("--keep-degen", action="store_true",
+                    help="don't gate out degeneracy-flagged points (use for base models)")
+    a = ap.parse_args()
+    global KEEP_DEGEN
+    KEEP_DEGEN = a.keep_degen
+    dirs = [Path(a.run_dir)] if a.run_dir else None
+    pts, bases = load_points(dirs)
     if not bases:
         sys.exit("no base_<domain>.json found — run the sweep (strength 0) first.")
     methods = [m for m in ("rmu", "cb") if any(p["method"] == m for p in pts.values())]
