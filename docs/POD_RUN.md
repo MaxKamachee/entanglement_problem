@@ -64,23 +64,39 @@ Each `runs/relearn/<cond>.json` has a `series` of {relearn_steps, offense_mcq, n
 - `*_relforget` = adversarial robustness (paper Fig 15): re-teach the forbidden corpus.
 - `*_relretain` = entanglement probe: does offense revive from legitimate same-domain text alone?
 
-## 3c. Phase-D: durability eval (RMU + circuit breakers) + gradient metric
+## 3c. Phase-D: tamper-durability eval (RMU + circuit breakers) — STAGED, inspect between stages
 
-The paper's Section-4 run. On Llama-3.1-8B-Instruct (the model Heretic mass-uncensors), measure how
-fast harmful capability returns under finetuning, for BOTH safeguards, adversarial + benign FT.
+The paper's Section-4 run. Run it in stages on a base model so a bad setting doesn't waste the
+whole session. **Accept the Llama license on HF first.**
+
+**Stage 1 — eval gate: pick the model (base vs instruct).** Base avoids refusal but may be weak at
+0-shot MCQ; instruct is refusal-robust for MCQ. Measure both, use whichever scores sane + has headroom.
 ```bash
-M=meta-llama/Llama-3.1-8B-Instruct          # accept the Llama license on HF first
-# unlearning (RMU) durability — 4 conditions (bio/cyber × relearn-on-forget/retain)
-python scripts/run_relearn_sweep.py --model $M --method rmu \
+for M in meta-llama/Llama-3.1-8B meta-llama/Llama-3.1-8B-Instruct; do
+  python scripts/eval_suite.py --model $M --domain cyber --tag gate_$(basename $M) \
+    --n-mcq 300 --n-neighbor 100 --n-mmlu 300 --n-mbpp 0 --n-saq 0 --n-degen 0 \
+    --out runs/gate/$(basename $M)_cyber.json
+done
+# inspect: WMDP-cyber should be ~0.4, MMLU ~0.6; if a model reads ~chance, don't use it.
+```
+
+**Stage 2 — RMU coeff calibration on the chosen model `$M`** (hyperparams are model-specific; don't
+borrow Zephyr's blindly). Find a coeff that removes offense while staying coherent:
+```bash
+python scripts/run_entanglement_sweep.py --model $M --arms cyber_wikitext bio_wikitext \
+  --coeffs 0 3 6.5 13 --out-dir runs/calib_llama
+# pick the coeff with a big offense drop and clean degeneracy guard -> $C
+```
+
+**Stage 3 — durability sweep at `$C`, both methods, 6 conditions** (forget / same-domain retain /
+other-domain CONTROL × bio,cyber):
+```bash
+python scripts/run_relearn_sweep.py --model $M --method rmu --coeff $C \
   --out-dir runs/relearn_llama --relearn-steps 300 --eval-every 50
-# tamper-resistance (circuit breakers) durability — same conditions
 python scripts/run_relearn_sweep.py --model $M --method circuit_breakers \
   --out-dir runs/relearn_llama --relearn-steps 300 --eval-every 50
-# entanglement predictor across ALL THREE domains (chem needs no corpus here)
-python scripts/gradient_align.py --model $M --domains bio cyber chem \
-  --out runs/gradient_align_llama.json
 ```
-Outputs: `runs/relearn_llama/{rmu,cb}_<cond>.json` (recovery curves) + `gradient_align_llama.json`.
+Outputs: `runs/relearn_llama/{rmu,cb}_<cond>.json`. (Gradient metric / chem deferred — see notes.)
 
 ## 4. Pull results back + analyze locally
 

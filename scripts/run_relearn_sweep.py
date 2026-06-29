@@ -23,14 +23,22 @@ SCRIPTS = Path(__file__).resolve().parent
 
 # unlearn arm is wikitext (the arm that actually removes offense); relearn corpus varies.
 CONDITIONS = {
+    # relearn on the SAME domain's forget corpus -> adversarial re-teach (upper bound)
     "bio_relforget": {"domain": "bio", "relearn_parquet": "data/wmdp_bio_units.parquet",
                       "relearn_buckets": ["forget"]},
-    "bio_relretain": {"domain": "bio", "relearn_parquet": "data/wmdp_bio_units.parquet",
-                      "relearn_buckets": ["retain"]},
     "cyber_relforget": {"domain": "cyber", "relearn_parquet": "data/wmdp_cyber_units.parquet",
                         "relearn_buckets": ["forget"]},
+    # relearn on the SAME domain's legit retain -> entanglement test
+    "bio_relretain": {"domain": "bio", "relearn_parquet": "data/wmdp_bio_units.parquet",
+                      "relearn_buckets": ["retain"]},
     "cyber_relretain": {"domain": "cyber", "relearn_parquet": "data/wmdp_cyber_units.parquet",
                         "relearn_buckets": ["retain"]},
+    # relearn on the OTHER domain's legit retain -> CONTROL (separates entanglement from
+    # generic RMU fragility: if offense revives as much from unrelated text, it's not entanglement)
+    "bio_relcontrol": {"domain": "bio", "relearn_parquet": "data/wmdp_cyber_units.parquet",
+                       "relearn_buckets": ["retain"]},
+    "cyber_relcontrol": {"domain": "cyber", "relearn_parquet": "data/wmdp_bio_units.parquet",
+                         "relearn_buckets": ["retain"]},
 }
 FORGET = {"bio": "data/wmdp_bio_units.parquet", "cyber": "data/wmdp_cyber_units.parquet"}
 

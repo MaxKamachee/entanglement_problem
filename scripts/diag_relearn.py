@@ -46,7 +46,7 @@ def load() -> dict:
                     stem = stem[len(pre):]
                     break
             method = method or "rmu"
-            mm = re.match(r"(bio|cyber|chem)_rel(forget|retain)$", stem)
+            mm = re.match(r"(bio|cyber|chem)_rel(forget|retain|control)$", stem)
             if not mm:
                 continue
             dom, corpus = mm.group(1), mm.group(2)
@@ -80,9 +80,11 @@ def make_figure(data: dict):
     if not methods:
         return None
     colors = {"bio": "tab:green", "cyber": "tab:red", "chem": "tab:purple"}
-    fig, axes = plt.subplots(len(methods), 2, figsize=(11, 4.2 * len(methods)), squeeze=False)
+    cols = ("forget", "retain", "control")
+    fig, axes = plt.subplots(len(methods), len(cols), figsize=(5.2 * len(cols), 4.2 * len(methods)),
+                             squeeze=False)
     for r, method in enumerate(methods):
-        for c, corpus in enumerate(("forget", "retain")):
+        for c, corpus in enumerate(cols):
             ax = axes[r][c]
             drew = False
             for dom in ("bio", "cyber", "chem"):
@@ -95,7 +97,9 @@ def make_figure(data: dict):
                 if e["base_off"] is not None:
                     ax.axhline(e["base_off"], ls=":", c=colors[dom], lw=1, alpha=0.6)
             ax.axhline(CHANCE, ls="--", c="gray", lw=1)
-            ax.set_title(f"{MLABEL[method]} — relearn on {corpus}", fontsize=10)
+            clabel = {"forget": "forget (adversarial)", "retain": "same-domain retain",
+                      "control": "other-domain retain (control)"}[corpus]
+            ax.set_title(f"{MLABEL[method]} — {clabel}", fontsize=10)
             ax.set_xlabel("relearn (LoRA finetune) steps")
             if drew:
                 ax.legend(fontsize=8)
@@ -125,7 +129,7 @@ def main() -> None:
     summ = {}
     for method in methods:
         for dom in ("bio", "cyber", "chem"):
-            for corpus in ("forget", "retain"):
+            for corpus in ("forget", "retain", "control"):
                 e = data.get((method, dom, corpus))
                 if not e:
                     continue
@@ -146,6 +150,17 @@ def main() -> None:
             more = "cyber" if c > b else "bio"
             L.append(f"- **{MLABEL[method]}, {label}:** frac→base — bio {fmt(b)}, cyber {fmt(c)} "
                      f"→ recovers more completely in **{more}**.")
+    # entanglement test: same-domain retain recovery MINUS other-domain control recovery
+    for method in methods:
+        for dom in ("bio", "cyber"):
+            ret, ctl = summ.get((method, dom, "retain")), summ.get((method, dom, "control"))
+            if ret is None or ctl is None:
+                continue
+            excess = ret - ctl
+            verdict = ("entanglement (same-domain text revives offense MORE than unrelated)"
+                       if excess > 0.05 else "NO entanglement signal (≈ generic RMU fragility)")
+            L.append(f"- **{MLABEL[method]}, {dom} entanglement test:** frac→base same-domain "
+                     f"{fmt(ret)} vs other-domain control {fmt(ctl)} (Δ={excess:+.3f}) → {verdict}.")
     # across methods within domain: which safeguard is more durable
     if len(methods) == 2:
         for dom in ("bio", "cyber"):
