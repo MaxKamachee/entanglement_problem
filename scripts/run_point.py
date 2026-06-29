@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import circuit_breakers  # noqa: E402
 import eval_suite  # noqa: E402
 import unlearn_rmu  # noqa: E402
 
@@ -31,18 +32,26 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model", required=True)
     p.add_argument("--tag", required=True)
-    p.add_argument("--coeff", type=float, required=True)
     p.add_argument("--out", required=True)
-    # RMU params (used iff coeff > 0)
+    p.add_argument("--method", choices=["rmu", "circuit_breakers"], default="rmu",
+                   help="unlearning method; strength = --coeff (rmu) or --cb-alpha (cb), 0 = base")
+    # corpora (used iff strength > 0)
     p.add_argument("--forget-parquet")
     p.add_argument("--forget-buckets", nargs="+")
     p.add_argument("--retain-parquet")
     p.add_argument("--retain-buckets", nargs="+")
+    # RMU params
+    p.add_argument("--coeff", type=float, default=0.0)
     p.add_argument("--layer", type=int, default=7)
     p.add_argument("--update-layers", type=int, default=3)
     p.add_argument("--alpha", type=float, default=1200.0)
     p.add_argument("--steps", type=int, default=500)
     p.add_argument("--lr", type=float, default=5e-5)
+    # circuit-breaker params (--cb-alpha is the CB strength axis)
+    p.add_argument("--cb-target-layers", type=int, nargs="+", default=[10, 20])
+    p.add_argument("--cb-alpha", type=float, default=0.0)
+    p.add_argument("--cb-steps", type=int, default=300)
+    p.add_argument("--cb-lr", type=float, default=1e-4)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--max-tokens", type=int, default=512)
     p.add_argument("--seed", type=int, default=0)
@@ -73,22 +82,30 @@ def main(argv=None) -> int:
         return AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.bfloat16,
                                                     device_map="auto")
 
+    strength = args.coeff if args.method == "rmu" else args.cb_alpha
     model = load()
-    if args.coeff > 0:
-        model.train(True)
-        model.requires_grad_(False)
-        frozen = load()
-        frozen.train(False)
-        frozen.requires_grad_(False)
+    if strength > 0:
         forget = unlearn_rmu.load_texts(args.forget_parquet, args.forget_buckets)
         retain = unlearn_rmu.load_texts(args.retain_parquet, args.retain_buckets)
-        print(f"RMU {args.tag}: forget={len(forget)} retain={len(retain)} "
-              f"layer={args.layer} coeff={args.coeff} alpha={args.alpha} steps={args.steps}", flush=True)
-        unlearn_rmu.run_rmu(model, frozen, tok, forget, retain, layer=args.layer,
-                            update_layers=args.update_layers, coeff=args.coeff, alpha=args.alpha,
-                            steps=args.steps, lr=args.lr, batch_size=args.batch_size,
-                            max_tokens=args.max_tokens)
-        del frozen
+        print(f"{args.method} {args.tag}: forget={len(forget)} retain={len(retain)} "
+              f"strength={strength}", flush=True)
+        if args.method == "rmu":
+            model.train(True)
+            model.requires_grad_(False)
+            frozen = load()
+            frozen.train(False)
+            frozen.requires_grad_(False)
+            unlearn_rmu.run_rmu(model, frozen, tok, forget, retain, layer=args.layer,
+                                update_layers=args.update_layers, coeff=args.coeff, alpha=args.alpha,
+                                steps=args.steps, lr=args.lr, batch_size=args.batch_size,
+                                max_tokens=args.max_tokens)
+            del frozen
+        else:  # circuit_breakers — LoRA RR merged into weights
+            model.requires_grad_(False)
+            model = circuit_breakers.run_cb(model, tok, forget, retain,
+                                            target_layers=args.cb_target_layers, steps=args.cb_steps,
+                                            lr=args.cb_lr, alpha=args.cb_alpha,
+                                            batch_size=args.batch_size, max_tokens=args.max_tokens)
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     model.eval()

@@ -59,12 +59,16 @@ def run(cmd: list[str]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", default="meta-llama/Llama-3.1-8B-Instruct")
+    p.add_argument("--model", default="meta-llama/Llama-3.1-8B")
     p.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ARMS))
-    p.add_argument("--coeffs", type=float, nargs="+", default=[0, 20, 100, 300, 1000])
-    p.add_argument("--layer", type=int, default=7)
-    p.add_argument("--alpha", type=float, default=1200.0)
-    p.add_argument("--steps", type=int, default=500)
+    p.add_argument("--method", choices=["rmu", "circuit_breakers"], default="rmu")
+    p.add_argument("--strengths", "--coeffs", type=float, nargs="+", dest="strengths",
+                   default=[0, 2, 4, 6.5, 10, 20],
+                   help="unlearning strength axis: RMU coeff or CB alpha (0 = base model)")
+    p.add_argument("--layer", type=int, default=7)        # RMU
+    p.add_argument("--alpha", type=float, default=1200.0)  # RMU retain weight
+    p.add_argument("--steps", type=int, default=500)       # RMU
+    p.add_argument("--cb-steps", type=int, default=300)    # CB
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--eval-args", default="", help="extra args passed through to run_point/eval_suite")
@@ -73,37 +77,41 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     extra = shlex.split(args.eval_args)
+    mtag = "rmu" if args.method == "rmu" else "cb"
 
-    def point(tag: str, coeff: float, domain: str, cfg: dict | None) -> None:
+    def point(tag: str, strength: float, domain: str, cfg: dict | None) -> None:
         eval_json = out / f"{tag}.json"
         if eval_json.exists():
             print(f"skip {tag} (already done)", flush=True)        # resume
             return
         cmd = [sys.executable, str(SCRIPTS / "run_point.py"),
-               "--model", args.model, "--tag", tag, "--coeff", str(coeff), "--domain", domain,
-               "--layer", str(args.layer), "--alpha", str(args.alpha),
-               "--steps", str(args.steps), "--seed", str(args.seed),
-               "--out", str(eval_json), *extra]
-        if coeff != 0:
+               "--model", args.model, "--tag", tag, "--domain", domain, "--method", args.method,
+               "--seed", str(args.seed), "--out", str(eval_json), *extra]
+        if strength != 0:
             cmd += ["--forget-parquet", cfg["forget_parquet"], "--forget-buckets", *cfg["forget_buckets"],
                     "--retain-parquet", cfg["retain_parquet"], "--retain-buckets", *cfg["retain_buckets"]]
+            if args.method == "rmu":
+                cmd += ["--coeff", str(strength), "--layer", str(args.layer),
+                        "--alpha", str(args.alpha), "--steps", str(args.steps)]
+            else:
+                cmd += ["--cb-alpha", str(strength), "--cb-steps", str(args.cb_steps)]
         try:
             run(cmd)
         except subprocess.CalledProcessError as e:
             print(f"[WARN] {tag} failed ({e}); continuing", flush=True)
 
-    # base model (coeff 0) depends only on the eval domain, not the retain set -> run once per domain
+    # base model (strength 0) is method- AND retain-independent -> run once per domain, shared
     domains = sorted({ARMS[a]["domain"] for a in args.arms})
-    if 0 in args.coeffs:
+    if 0 in args.strengths:
         for domain in domains:
             point(f"base_{domain}", 0, domain, None)
 
     for arm in args.arms:
         cfg = ARMS[arm]
-        for coeff in args.coeffs:
-            if coeff == 0:
+        for s in args.strengths:
+            if s == 0:
                 continue   # handled by the per-domain base above
-            point(f"{arm}_c{int(coeff)}", coeff, cfg["domain"], cfg)
+            point(f"{mtag}_{arm}_s{s:g}", s, cfg["domain"], cfg)
 
     print(f"sweep complete -> {out}", flush=True)
     return 0
