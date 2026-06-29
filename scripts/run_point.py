@@ -25,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import circuit_breakers  # noqa: E402
 import eval_suite  # noqa: E402
+import npo  # noqa: E402
 import unlearn_rmu  # noqa: E402
 
 
@@ -33,8 +34,8 @@ def parse_args(argv=None):
     p.add_argument("--model", required=True)
     p.add_argument("--tag", required=True)
     p.add_argument("--out", required=True)
-    p.add_argument("--method", choices=["rmu", "circuit_breakers"], default="rmu",
-                   help="unlearning method; strength = --coeff (rmu) or --cb-alpha (cb), 0 = base")
+    p.add_argument("--method", choices=["rmu", "circuit_breakers", "npo"], default="rmu",
+                   help="strength = --coeff (rmu) / --cb-alpha (cb) / --npo-steps (npo); 0 = base")
     # corpora (used iff strength > 0)
     p.add_argument("--forget-parquet")
     p.add_argument("--forget-buckets", nargs="+")
@@ -52,6 +53,11 @@ def parse_args(argv=None):
     p.add_argument("--cb-alpha", type=float, default=0.0)
     p.add_argument("--cb-steps", type=int, default=300)
     p.add_argument("--cb-lr", type=float, default=1e-4)
+    # NPO params (--npo-steps is the NPO strength axis)
+    p.add_argument("--npo-steps", type=int, default=0)
+    p.add_argument("--npo-lr", type=float, default=2e-4)
+    p.add_argument("--npo-beta", type=float, default=0.1)
+    p.add_argument("--npo-retain-weight", type=float, default=1.0)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--max-tokens", type=int, default=512)
     p.add_argument("--seed", type=int, default=0)
@@ -82,7 +88,8 @@ def main(argv=None) -> int:
         return AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.bfloat16,
                                                     device_map="auto")
 
-    strength = args.coeff if args.method == "rmu" else args.cb_alpha
+    strength = {"rmu": args.coeff, "circuit_breakers": args.cb_alpha,
+                "npo": args.npo_steps}[args.method]
     model = load()
     if strength > 0:
         forget = unlearn_rmu.load_texts(args.forget_parquet, args.forget_buckets)
@@ -100,12 +107,17 @@ def main(argv=None) -> int:
                                 steps=args.steps, lr=args.lr, batch_size=args.batch_size,
                                 max_tokens=args.max_tokens)
             del frozen
-        else:  # circuit_breakers — LoRA RR merged into weights
+        elif args.method == "circuit_breakers":   # LoRA RR merged into weights
             model.requires_grad_(False)
             model = circuit_breakers.run_cb(model, tok, forget, retain,
                                             target_layers=args.cb_target_layers, steps=args.cb_steps,
                                             lr=args.cb_lr, alpha=args.cb_alpha,
                                             batch_size=args.batch_size, max_tokens=args.max_tokens)
+        else:  # npo — LoRA NPO merged into weights
+            model.requires_grad_(False)
+            model = npo.run_npo(model, tok, forget, retain, steps=args.npo_steps, lr=args.npo_lr,
+                                beta=args.npo_beta, retain_weight=args.npo_retain_weight,
+                                batch_size=args.batch_size, max_tokens=args.max_tokens)
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     model.eval()

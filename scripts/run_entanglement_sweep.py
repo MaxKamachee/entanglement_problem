@@ -61,15 +61,16 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--model", default="meta-llama/Llama-3.1-8B")
     p.add_argument("--arms", nargs="+", default=list(ARMS), choices=list(ARMS))
-    p.add_argument("--method", choices=["rmu", "circuit_breakers"], default="rmu")
+    p.add_argument("--method", choices=["rmu", "circuit_breakers", "npo"], default="rmu")
     p.add_argument("--strengths", "--coeffs", type=float, nargs="+", dest="strengths",
                    default=[0, 2, 4, 6.5, 10, 20],
-                   help="unlearning strength axis: RMU coeff or CB alpha (0 = base model)")
+                   help="unlearning strength: RMU coeff / CB alpha / NPO steps (0 = base model)")
+    p.add_argument("--seeds", type=int, nargs="+", default=[0],
+                   help="training seeds per (arm,strength); enables error bars over runs")
     p.add_argument("--layer", type=int, default=7)        # RMU
     p.add_argument("--alpha", type=float, default=1200.0)  # RMU retain weight
     p.add_argument("--steps", type=int, default=500)       # RMU
     p.add_argument("--cb-steps", type=int, default=300)    # CB
-    p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--eval-args", default="", help="extra args passed through to run_point/eval_suite")
     args = p.parse_args(argv)
@@ -77,41 +78,44 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     extra = shlex.split(args.eval_args)
-    mtag = "rmu" if args.method == "rmu" else "cb"
+    mtag = {"rmu": "rmu", "circuit_breakers": "cb", "npo": "npo"}[args.method]
 
-    def point(tag: str, strength: float, domain: str, cfg: dict | None) -> None:
+    def point(tag: str, strength: float, domain: str, cfg: dict | None, seed: int) -> None:
         eval_json = out / f"{tag}.json"
         if eval_json.exists():
             print(f"skip {tag} (already done)", flush=True)        # resume
             return
         cmd = [sys.executable, str(SCRIPTS / "run_point.py"),
                "--model", args.model, "--tag", tag, "--domain", domain, "--method", args.method,
-               "--seed", str(args.seed), "--out", str(eval_json), *extra]
+               "--seed", str(seed), "--out", str(eval_json), *extra]
         if strength != 0:
             cmd += ["--forget-parquet", cfg["forget_parquet"], "--forget-buckets", *cfg["forget_buckets"],
                     "--retain-parquet", cfg["retain_parquet"], "--retain-buckets", *cfg["retain_buckets"]]
             if args.method == "rmu":
                 cmd += ["--coeff", str(strength), "--layer", str(args.layer),
                         "--alpha", str(args.alpha), "--steps", str(args.steps)]
-            else:
+            elif args.method == "circuit_breakers":
                 cmd += ["--cb-alpha", str(strength), "--cb-steps", str(args.cb_steps)]
+            else:  # npo: strength = number of steps
+                cmd += ["--npo-steps", str(int(strength))]
         try:
             run(cmd)
         except subprocess.CalledProcessError as e:
             print(f"[WARN] {tag} failed ({e}); continuing", flush=True)
 
-    # base model (strength 0) is method- AND retain-independent -> run once per domain, shared
+    # base model (strength 0): training-free + eval is a deterministic slice -> one per domain
     domains = sorted({ARMS[a]["domain"] for a in args.arms})
     if 0 in args.strengths:
         for domain in domains:
-            point(f"base_{domain}", 0, domain, None)
+            point(f"base_{domain}", 0, domain, None, args.seeds[0])
 
     for arm in args.arms:
         cfg = ARMS[arm]
         for s in args.strengths:
             if s == 0:
                 continue   # handled by the per-domain base above
-            point(f"{mtag}_{arm}_s{s:g}", s, cfg["domain"], cfg)
+            for seed in args.seeds:
+                point(f"{mtag}_{arm}_s{s:g}_seed{seed}", s, cfg["domain"], cfg, seed)
 
     print(f"sweep complete -> {out}", flush=True)
     return 0

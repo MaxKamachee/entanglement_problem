@@ -1,24 +1,26 @@
 #!/usr/bin/env python
 """Analyze the entanglement unlearning-tax sweep -> reports/entanglement_unlearning_tax.md.
 
-Reads runs/entanglement*/*.json (from run_entanglement_sweep.py / run_entanglement_flash.py),
-which may mix unlearning methods (rmu_*, cb_*) and a shared base_<domain>. Per (method, domain,
-retain-set, strength): offense (WMDP MCQ), same-domain MMLU neighbor, general MMLU, coherence.
+Reads runs/entanglement*/*.json (run_entanglement_sweep.py), possibly mixing methods (rmu/cb/npo),
+retain sets (wikitext/substrate), strengths, and SEEDS. Aggregates over seeds to put error bars on
+the safety-tax curves and a confidence interval on the tax slope.
 
-Produces the safety-tax figures that support the paper's claims:
-  FIG 1 (Pareto): offense removed vs same-domain legit kept, per domain, RMU vs CB (method-indep).
-  FIG 2 (near-neighbor bars): at a fixed operating point, base vs unlearned per subject — shows
-        unlearning craters the near-domain legit neighbor (the tax made concrete).
-Tax = same-domain neighbor lost per unit offense removed (slope through origin, coherent points).
+Tag formats: base_<domain>; <rmu|cb|npo>_<domain>_<wikitext|substrate>_s<strength>[_seed<n>];
+legacy <domain>_<wikitext|substrate>_c<coeff> (= rmu, seed 0).
 
-Tag formats parsed: base_<domain>; <rmu|cb>_<domain>_<wikitext|substrate>_s<strength>;
-legacy <domain>_<wikitext|substrate>_c<coeff> (treated as rmu).
+Tax = same-domain legit ability lost per unit offense removed. Computed PER SEED (slope through that
+seed's coherent points) then averaged -> tax ± SE. Cross-domain asymmetry reports the bio/cyber gap
+against the combined SE so you can see if it's beyond noise.
+
+Figures: FIG 1 Pareto (offense removed vs neighbor kept) with per-point error bars, RMU/CB/NPO ×
+retain × domain. FIG 2 near-neighbor bars at offense-removed≈0.6 (seed-averaged).
 """
 
 from __future__ import annotations
 
 import json
 import re
+import statistics as st
 import sys
 from pathlib import Path
 
@@ -28,20 +30,17 @@ FIG_DIR = ROOT / "reports" / "figures"
 CHANCE = 0.25
 DOMAINS = ["bio", "cyber", "chem"]
 RETAINS = ["wikitext", "substrate"]
-MLABEL = {"rmu": "RMU", "cb": "Circuit Breakers"}
-MSTYLE = {"rmu": "-", "cb": "--"}
+MLABEL = {"rmu": "RMU", "cb": "Circuit Breakers", "npo": "NPO"}
+MSTYLE = {"rmu": "-", "cb": "--", "npo": "-."}
 RCOLOR = {"wikitext": "tab:orange", "substrate": "tab:blue"}
+KEEP_DEGEN = False
 
 
-KEEP_DEGEN = False   # set True for base models where the free-gen degeneracy guard misfires
-
-
-def load_points(dirs=None) -> tuple[dict, dict]:
-    """Returns (points, bases). points[tag] = {method,domain,retain,arm,strength,scores,degenerate}."""
-    pts, bases = {}, {}
+def load_points(dirs=None):
+    pts, bases = [], {}
     run_dirs = dirs if dirs is not None else sorted(ROOT.glob("runs/entanglement*"))
     for run_dir in run_dirs:
-        for p in sorted(run_dir.glob("*.json")):
+        for p in sorted(Path(run_dir).glob("*.json")):
             d = json.loads(p.read_text())
             tag = d.get("tag", p.stem)
             scores = d.get("scores", {})
@@ -49,60 +48,79 @@ def load_points(dirs=None) -> tuple[dict, dict]:
             if tag.startswith("base_"):
                 bases[tag.split("_", 1)[1]] = scores
                 continue
-            m = re.match(r"(rmu|cb)_(bio|cyber|chem)_(wikitext|substrate)_s([\d.]+)", tag)
-            mo = re.match(r"(bio|cyber|chem)_(wikitext|substrate)_c([\d.]+)", tag)  # legacy = rmu
+            m = re.match(r"(rmu|cb|npo)_(bio|cyber|chem)_(wikitext|substrate)_s([\d.]+)(?:_seed(\d+))?$", tag)
+            mo = re.match(r"(bio|cyber|chem)_(wikitext|substrate)_c([\d.]+)$", tag)
             if m:
-                method, dom, retain, strength = m.group(1), m.group(2), m.group(3), float(m.group(4))
+                method, dom, ret, strength = m.group(1), m.group(2), m.group(3), float(m.group(4))
+                seed = int(m.group(5)) if m.group(5) else 0
             elif mo:
-                method, dom, retain, strength = "rmu", mo.group(1), mo.group(2), float(mo.group(3))
+                method, dom, ret, strength, seed = "rmu", mo.group(1), mo.group(2), float(mo.group(3)), 0
             else:
                 continue
-            pts[tag] = {"method": method, "domain": dom, "retain": retain, "arm": f"{dom}_{retain}",
-                        "strength": strength, "scores": scores, "degenerate": degen}
+            pts.append({"method": method, "domain": dom, "retain": ret, "arm": f"{dom}_{ret}",
+                        "strength": strength, "seed": seed, "scores": scores, "degenerate": degen})
     return pts, bases
 
 
-def norm_point(scores: dict, base: dict) -> dict:
-    bo, bn, bg = base.get("offense_mcq"), base.get("neighbor_mmlu"), base.get("general_mmlu")
-    o, n, g = scores.get("offense_mcq"), scores.get("neighbor_mmlu"), scores.get("general_mmlu")
+def norm_point(scores, base):
+    bo, bn = base.get("offense_mcq"), base.get("neighbor_mmlu")
+    o, n = scores.get("offense_mcq"), scores.get("neighbor_mmlu")
     out = {}
     if bo is not None and o is not None and bo > CHANCE:
-        out["offense_removed"] = max(0.0, (bo - o) / (bo - CHANCE))
+        out["off"] = max(0.0, (bo - o) / (bo - CHANCE))
     if bn and n is not None:
-        out["neighbor_kept"] = n / bn
-    if bg and g is not None:
-        out["general_kept"] = g / bg
+        out["nbr"] = n / bn
     return out
 
 
-def fmt(x) -> str:
-    return f"{x:.3f}" if isinstance(x, (int, float)) else "—"
+def _se(xs):
+    return (st.stdev(xs) / len(xs) ** 0.5) if len(xs) > 1 else 0.0
 
 
-def curve(pts, bases, method, arm):
-    """Sorted coherent (offense_removed, neighbor_kept, strength, degenerate) for a (method,arm)."""
+def agg_curve(pts, bases, method, arm):
+    """Per strength: aggregate over seeds -> dict(strength -> (off_m, off_se, nbr_m, nbr_se, n, degen))."""
     dom = arm.split("_")[0]
-    rows = []
-    for p in pts.values():
-        if p["method"] == method and p["arm"] == arm:
-            n = norm_point(p["scores"], bases.get(dom, {}))
-            if "offense_removed" in n and "neighbor_kept" in n:
-                rows.append((n["offense_removed"], n["neighbor_kept"], p["strength"],
-                             p["degenerate"] and not KEEP_DEGEN))
-    return sorted(rows, key=lambda r: r[2])
+    by_s = {}
+    for p in pts:
+        if p["method"] != method or p["arm"] != arm:
+            continue
+        n = norm_point(p["scores"], bases.get(dom, {}))
+        if "off" in n and "nbr" in n:
+            by_s.setdefault(p["strength"], []).append((n["off"], n["nbr"], p["degenerate"]))
+    out = {}
+    for s, rows in by_s.items():
+        offs = [r[0] for r in rows]; nbrs = [r[1] for r in rows]
+        degen = all(r[2] for r in rows) and not KEEP_DEGEN
+        out[s] = (st.mean(offs), _se(offs), st.mean(nbrs), _se(nbrs), len(rows), degen)
+    return dict(sorted(out.items()))
 
 
-def tax(pts, bases, method, arm):
-    pairs = [(x, 1 - y) for x, y, _, dg in curve(pts, bases, method, arm) if not dg and x > 0.02]
-    if not pairs:
-        return None
-    sxx = sum(x * x for x, _ in pairs); sxy = sum(x * y for x, y in pairs)
-    return sxy / sxx if sxx > 0 else None
+def tax_ci(pts, bases, method, arm):
+    """Per-seed slope of (1-nbr) vs off through coherent points -> (mean, se, n_seeds, max_off)."""
+    dom = arm.split("_")[0]
+    by_seed, all_off = {}, []
+    for p in pts:
+        if p["method"] != method or p["arm"] != arm:
+            continue
+        if p["degenerate"] and not KEEP_DEGEN:
+            continue
+        n = norm_point(p["scores"], bases.get(dom, {}))
+        if "off" in n and "nbr" in n:
+            all_off.append(n["off"])
+            if n["off"] > 0.02:
+                by_seed.setdefault(p["seed"], []).append((n["off"], 1 - n["nbr"]))
+    slopes = []
+    for pairs in by_seed.values():
+        sxx = sum(x * x for x, _ in pairs)
+        if sxx > 0:
+            slopes.append(sum(x * y for x, y in pairs) / sxx)
+    if not slopes:
+        return None, None, 0, (max(all_off) if all_off else 0.0)
+    return st.mean(slopes), _se(slopes), len(slopes), max(all_off)
 
 
-def max_off(pts, bases, method, arm):
-    vals = [x for x, _, _, dg in curve(pts, bases, method, arm) if not dg]
-    return max(vals) if vals else 0.0
+def fmt(x):
+    return f"{x:.3f}" if isinstance(x, (int, float)) else "—"
 
 
 def make_figures(pts, bases, methods):
@@ -115,43 +133,52 @@ def make_figures(pts, bases, methods):
     doms = [d for d in DOMAINS if d in bases]
     paths = []
 
-    # --- FIG 1: Pareto, per domain, RMU vs CB (linestyle) x retain (color) ---
-    fig, axes = plt.subplots(1, len(doms), figsize=(5.2 * len(doms), 4.6), squeeze=False, sharey=True)
+    # FIG 1: Pareto with error bars (seeds), RMU/CB/NPO × retain × domain
+    fig, axes = plt.subplots(1, len(doms), figsize=(5.4 * len(doms), 4.8), squeeze=False, sharey=True)
     for ax, dom in zip(axes[0], doms):
         for method in methods:
             for retain in RETAINS:
-                c = curve(pts, bases, method, f"{dom}_{retain}")
-                if not c:
+                ag = agg_curve(pts, bases, method, f"{dom}_{retain}")
+                if not ag:
                     continue
-                xs = [r[0] for r in c]; ys = [r[1] for r in c]
-                ax.plot(xs, ys, MSTYLE[method], color=RCOLOR[retain], alpha=0.7,
-                        label=f"{MLABEL[method]} / {retain}")
-                for x, y, s, dg in c:
-                    ax.scatter([x], [y], color=RCOLOR[retain], marker="x" if dg else "o",
-                               s=55 if dg else 35, zorder=3)
+                xs = [v[0] for v in ag.values()]; xe = [v[1] for v in ag.values()]
+                ys = [v[2] for v in ag.values()]; ye = [v[3] for v in ag.values()]
+                lbl = f"{MLABEL[method]}/{retain}"
+                ax.errorbar(xs, ys, xerr=xe, yerr=ye, fmt="o", ls=MSTYLE[method],
+                            color=RCOLOR[retain], alpha=0.8, ms=4, capsize=2, label=lbl)
         ax.axhline(1.0, ls=":", c="gray", lw=1)
         ax.set_title(f"WMDP-{dom}", fontsize=11)
         ax.set_xlabel("offense removed (→ chance = 1.0)")
-        ax.set_xlim(-0.02, 1.1); ax.set_ylim(0, 1.05)
+        ax.set_xlim(-0.03, 1.1); ax.set_ylim(0, 1.05)
     axes[0][0].set_ylabel("same-domain neighbor kept")
     axes[0][0].legend(fontsize=8, loc="lower left")
-    fig.suptitle("Safety tax: legitimate same-domain ability kept vs offense removed "
-                 "(down-slope = tax; × = incoherent)", fontsize=11)
+    fig.suptitle("Safety tax (mean ± SE over seeds): legit same-domain ability kept vs offense removed",
+                 fontsize=11)
     fig.tight_layout()
     p1 = FIG_DIR / "entanglement_pareto.png"
     fig.savefig(p1, dpi=150); plt.close(fig); paths.append(str(p1))
 
-    # --- FIG 2: near-neighbor bars at an operating point (offense_removed closest to 0.6) ---
-    def op_point(method, arm):
-        c = [r for r in curve(pts, bases, method, arm) if not r[3]]
-        if not c:
+    # FIG 2: near-neighbor bars at offense-removed≈0.6 (seed-averaged scores)
+    def op_scores(method, arm):
+        ag = agg_curve(pts, bases, method, arm)
+        cand = {s: v for s, v in ag.items() if not v[5]}
+        if not cand:
             return None
-        best = min(c, key=lambda r: abs(r[0] - 0.6))
-        s = best[2]
-        for p in pts.values():
-            if p["method"] == method and p["arm"] == arm and p["strength"] == s:
-                return p["scores"]
-        return None
+        s_op = min(cand, key=lambda s: abs(cand[s][0] - 0.6))
+        rows = [p["scores"] for p in pts if p["method"] == method and p["arm"] == arm
+                and p["strength"] == s_op and (KEEP_DEGEN or not p["degenerate"])]
+        if not rows:
+            return None
+        keys = ["offense_mcq", "general_mmlu"] + list(bases[arm.split("_")[0]]
+                                                      .get("neighbor_mmlu_by_subject", {}))
+        avg = {}
+        for k in keys:
+            vals = [(r.get(k) if k in ("offense_mcq", "general_mmlu")
+                     else r.get("neighbor_mmlu_by_subject", {}).get(k)) for r in rows]
+            vals = [v for v in vals if v is not None]
+            if vals:
+                avg[k] = st.mean(vals)
+        return avg
 
     fig, axes = plt.subplots(len(methods), len(doms), figsize=(5.6 * len(doms), 4.2 * len(methods)),
                              squeeze=False)
@@ -161,50 +188,43 @@ def make_figures(pts, bases, methods):
             subj = list(base.get("neighbor_mmlu_by_subject", {}).keys())
             cats = ["offense_mcq", "general_mmlu"] + subj
             labels = ["WMDP\n(off↓)", "MMLU\nall"] + [s.replace("_", "\n") for s in subj]
-            series = {"base": base}
+            series = {"base": {k: (base.get(k) if k in ("offense_mcq", "general_mmlu")
+                                   else base.get("neighbor_mmlu_by_subject", {}).get(k)) for k in cats}}
             for retain in RETAINS:
-                sc = op_point(method, f"{dom}_{retain}")
+                sc = op_scores(method, f"{dom}_{retain}")
                 if sc:
                     series[retain] = sc
             x = np.arange(len(cats)); w = 0.26
             for i, (name, sc) in enumerate(series.items()):
-                def get(cat, sc=sc):
-                    return (sc.get(cat) if cat in ("offense_mcq", "general_mmlu")
-                            else sc.get("neighbor_mmlu_by_subject", {}).get(cat))
-                cax.bar(x + (i - 1) * w, [get(c) or 0 for c in cats], w, label=name)
+                cax.bar(x + (i - 1) * w, [sc.get(c) or 0 for c in cats], w, label=name)
             cax.axhline(CHANCE, ls="--", c="gray", lw=1)
-            cax.set_title(f"{MLABEL[method]} — WMDP-{dom} (off. removed≈0.6)", fontsize=10)
+            cax.set_title(f"{MLABEL[method]} — WMDP-{dom} (off≈0.6)", fontsize=10)
             cax.set_xticks(x); cax.set_xticklabels(labels, fontsize=7); cax.set_ylim(0, 1.0)
             cax.legend(fontsize=8)
         axes[r][0].set_ylabel("accuracy")
-    fig.suptitle("Near-domain over-removal: unlearning offense craters the legit near-neighbor "
-                 "(targeted retain preserves it)", fontsize=11)
+    fig.suptitle("Near-domain over-removal at matched offense removed (seed-averaged)", fontsize=11)
     fig.tight_layout()
     p2 = FIG_DIR / "entanglement_fig11.png"
     fig.savefig(p2, dpi=150); plt.close(fig); paths.append(str(p2))
     return paths
 
 
-def main() -> None:
+def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", help="single run dir (default: glob runs/entanglement*)")
-    ap.add_argument("--keep-degen", action="store_true",
-                    help="don't gate out degeneracy-flagged points (use for base models)")
+    ap.add_argument("--keep-degen", action="store_true", help="don't gate degeneracy-flagged points")
     a = ap.parse_args()
     global KEEP_DEGEN
     KEEP_DEGEN = a.keep_degen
-    dirs = [Path(a.run_dir)] if a.run_dir else None
-    pts, bases = load_points(dirs)
+    pts, bases = load_points([Path(a.run_dir)] if a.run_dir else None)
     if not bases:
-        sys.exit("no base_<domain>.json found — run the sweep (strength 0) first.")
-    methods = [m for m in ("rmu", "cb") if any(p["method"] == m for p in pts.values())]
-    if not methods:
-        sys.exit("no method points (rmu_*/cb_*) found.")
+        sys.exit("no base_<domain>.json found.")
+    methods = [m for m in ("rmu", "cb", "npo") if any(p["method"] == m for p in pts)]
 
-    L = ["# Entanglement unlearning-tax (RMU + Circuit Breakers)", ""]
-    L.append("Safety tax = legitimate same-domain ability lost per unit offense removed. "
-             "Methods: " + ", ".join(MLABEL[m] for m in methods) + ".")
+    L = ["# Entanglement unlearning-tax (seed-aggregated)", ""]
+    L.append("Tax = legit same-domain ability lost per unit offense removed (per-seed slope, "
+             "mean ± SE). Methods: " + ", ".join(MLABEL[m] for m in methods) + ".")
     L.append("")
     L.append("## Base model")
     L.append("| domain | WMDP offense | neighbor (mean) | general MMLU |")
@@ -215,40 +235,39 @@ def main() -> None:
             L.append(f"| {d} | {fmt(b.get('offense_mcq'))} | {fmt(b.get('neighbor_mmlu'))} | "
                      f"{fmt(b.get('general_mmlu'))} |")
     L.append("")
-
-    L.append("## Tax by method × domain × retain (slope; coherent points)")
-    L.append("| method | domain | retain | tax | max offense removed |")
-    L.append("|---|---|---|--:|--:|")
+    L.append("## Tax ± SE (over seeds) by method × domain × retain")
+    L.append("| method | domain | retain | tax ± SE | seeds | max off removed |")
+    L.append("|---|---|---|--:|--:|--:|")
+    T = {}
     for method in methods:
         for dom in DOMAINS:
             if dom not in bases:
                 continue
             for retain in RETAINS:
-                arm = f"{dom}_{retain}"
-                if not curve(pts, bases, method, arm):
+                t, se, ns, mx = tax_ci(pts, bases, method, f"{dom}_{retain}")
+                if ns == 0 and mx < 0.02:
                     continue
-                L.append(f"| {MLABEL[method]} | {dom} | {retain} | "
-                         f"{fmt(tax(pts, bases, method, arm))} | "
-                         f"{fmt(max_off(pts, bases, method, arm))} |")
+                T[(method, dom, retain)] = (t, se, ns)
+                tstr = f"{fmt(t)} ± {fmt(se)}" if t is not None else "— (suppressed)"
+                L.append(f"| {MLABEL[method]} | {dom} | {retain} | {tstr} | {ns} | {fmt(mx)} |")
     L.append("")
-
-    # cross-domain asymmetry on the wikitext arm, per method (the claim figure backs)
     L.append("## Cross-domain asymmetry (wikitext arm)")
     for method in methods:
-        tw = {d: tax(pts, bases, method, f"{d}_wikitext") for d in ("bio", "cyber")}
-        if tw["bio"] is not None and tw["cyber"] is not None:
-            more = "cyber" if tw["cyber"] > tw["bio"] else "bio"
-            L.append(f"- **{MLABEL[method]}:** bio tax {fmt(tw['bio'])} vs cyber {fmt(tw['cyber'])} "
-                     f"→ more entangled: **{more}**.")
+        tb = T.get((method, "bio", "wikitext")); tc = T.get((method, "cyber", "wikitext"))
+        if tb and tc and tb[0] is not None and tc[0] is not None:
+            gap = tc[0] - tb[0]
+            comb_se = (tb[1] ** 2 + tc[1] ** 2) ** 0.5
+            sig = "beyond combined SE" if abs(gap) > comb_se else "WITHIN combined SE (not significant)"
+            L.append(f"- **{MLABEL[method]}:** cyber {fmt(tc[0])}±{fmt(tc[1])} vs bio "
+                     f"{fmt(tb[0])}±{fmt(tb[1])} → gap {gap:+.3f} ({sig}).")
 
-    fig_paths = make_figures(pts, bases, methods)
+    figs = make_figures(pts, bases, methods)
     L.append("")
     L.append("## Figures")
-    for p in fig_paths:
+    for p in figs:
         L.append(f"\n![{Path(p).stem}]({Path(p).relative_to(ROOT / 'reports')})")
-
     REPORT.write_text("\n".join(L))
-    print(f"wrote {REPORT.relative_to(ROOT)} + {len(fig_paths)} figures; methods={methods}")
+    print(f"wrote {REPORT.relative_to(ROOT)} + {len(figs)} figures; methods={methods}")
 
 
 if __name__ == "__main__":
