@@ -102,12 +102,19 @@ def main(argv=None) -> int:
         m.train(trainable); m.requires_grad_(False)
         return m
 
-    # 1) unlearn with the chosen method
     forget = unlearn_rmu.load_texts(args.forget_parquet, args.forget_buckets)
     retain = unlearn_rmu.load_texts(args.retain_parquet, args.retain_buckets)
+
+    # 0) measure BASE offense/neighbor before unlearning -> self-contained fraction-to-base
+    model = load(False)
+    model.eval()
+    base = quick_eval(model, tok, args.domain, args.n_mcq, args.n_neighbor)
+    print(f"base (pre-unlearn): {base}", flush=True)
+
+    # 1) unlearn with the chosen method
     print(f"{args.method} {args.domain}: forget={len(forget)} retain={len(retain)}", flush=True)
     if args.method == "rmu":
-        model = load(True)
+        model.train(True)
         frozen = load(False)
         unlearn_rmu.run_rmu(model, frozen, tok, forget, retain, layer=args.layer,
                             update_layers=args.update_layers, coeff=args.coeff, alpha=args.alpha,
@@ -115,7 +122,6 @@ def main(argv=None) -> int:
                             max_tokens=args.max_tokens)
         del frozen
     else:  # circuit_breakers — LoRA RR training merged into weights
-        model = load(False)
         model = circuit_breakers.run_cb(model, tok, forget, retain,
                                         target_layers=args.cb_target_layers, steps=args.cb_steps,
                                         lr=args.cb_lr, alpha=args.cb_alpha,
@@ -141,8 +147,9 @@ def main(argv=None) -> int:
         print(f"after {done} relearn steps: {series[-1]}", flush=True)
 
     out = {"model": args.model, "domain": args.domain, "method": args.method, "coeff": args.coeff,
-           "relearn_parquet": args.relearn_parquet, "relearn_buckets": args.relearn_buckets,
-           "relearn_steps": args.relearn_steps, "series": series}
+           "base": base, "relearn_parquet": args.relearn_parquet,
+           "relearn_buckets": args.relearn_buckets, "relearn_steps": args.relearn_steps,
+           "series": series}
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(out, indent=2))
     print(f"wrote {args.out}", flush=True)
